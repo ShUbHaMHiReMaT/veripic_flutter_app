@@ -1,10 +1,14 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Bundle emitted by [CameraService.capture].
+import 'overlay_service.dart';
+
 class CaptureResult {
   CaptureResult({
     required this.bytes,
@@ -17,10 +21,6 @@ class CaptureResult {
   final DateTime timestampUtc;
 }
 
-/// Thin wrapper around [CameraController] + [Geolocator].
-///
-/// The service exposes only the operations the UI needs so screens don't
-/// have to reason about lifecycle bugs (double-init, dispose ordering, etc).
 class CameraService {
   CameraController? _controller;
   CameraController? get controller => _controller;
@@ -47,16 +47,31 @@ class CameraService {
     if (c == null || !c.value.isInitialized) {
       throw StateError('Camera not initialized');
     }
-    // Take the shot and read GPS in parallel — GPS reads can be 200-800ms.
+
+    // Capture photo and current GPS location simultaneously
     final Future<XFile> photoFuture = c.takePicture();
     final Future<Position> posFuture = _readPosition();
 
-    final XFile photo = await photoFuture;
+    final XFile rawPhoto = await photoFuture;
     final Position position = await posFuture;
-    final Uint8List bytes = await photo.readAsBytes();
+    final Uint8List rawBytes = await rawPhoto.readAsBytes();
+
+    // 1. Burn GPS & Address Stamp onto the photo canvas
+    final Uint8List stampedBytes = await OverlayService.applyGpsStamp(
+      imageBytes: rawBytes,
+      position: position,
+    );
+
+    // 2. Save stamped photo to a temporary file
+    final Directory tempDir = await getTemporaryDirectory();
+    final String tempPath = '${tempDir.path}/veripic_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final File stampedFile = await File(tempPath).writeAsBytes(stampedBytes);
+
+    // 3. Export to Public Device Gallery
+    await Gal.putImage(stampedFile.path, album: 'VeriPic');
 
     return CaptureResult(
-      bytes: bytes,
+      bytes: stampedBytes,
       position: position,
       timestampUtc: DateTime.now().toUtc(),
     );
@@ -68,20 +83,22 @@ class CameraService {
       throw StateError('Location services are disabled');
     }
     return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 0,
-      ),
+      desiredAccuracy: LocationAccuracy.best,
     );
   }
 
   Future<void> _ensurePermissions() async {
-    final Map<Permission, PermissionStatus> statuses =
-        await <Permission>[Permission.camera, Permission.locationWhenInUse].request();
+    final Map<Permission, PermissionStatus> statuses = await <Permission>[
+      Permission.camera,
+      Permission.locationWhenInUse,
+      Permission.location,
+    ].request();
+
     if (statuses[Permission.camera] != PermissionStatus.granted) {
       throw StateError('Camera permission denied');
     }
-    if (statuses[Permission.locationWhenInUse] != PermissionStatus.granted) {
+    if (statuses[Permission.locationWhenInUse] != PermissionStatus.granted &&
+        statuses[Permission.location] != PermissionStatus.granted) {
       throw StateError('Location permission denied');
     }
   }
