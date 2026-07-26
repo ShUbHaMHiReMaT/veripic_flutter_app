@@ -7,7 +7,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'device_service.dart';
 import 'overlay_service.dart';
+import 'security_service.dart';
 
 class CaptureResult {
   CaptureResult({
@@ -24,6 +26,9 @@ class CaptureResult {
 class CameraService {
   CameraController? _controller;
   CameraController? get controller => _controller;
+
+  final SecurityService _securityService = SecurityService();
+  final DeviceService _deviceService = DeviceService();
 
   Future<void> initialize(CameraDescription description) async {
     await _ensurePermissions();
@@ -48,32 +53,45 @@ class CameraService {
       throw StateError('Camera not initialized');
     }
 
-    // Capture photo and current GPS location simultaneously
+    final DateTime timestamp = DateTime.now().toUtc();
     final Future<XFile> photoFuture = c.takePicture();
     final Future<Position> posFuture = _readPosition();
+    final Future<String> deviceIdFuture = _deviceService.getDeviceId();
 
     final XFile rawPhoto = await photoFuture;
     final Position position = await posFuture;
+    final String deviceId = await deviceIdFuture;
     final Uint8List rawBytes = await rawPhoto.readAsBytes();
 
-    // 1. Burn GPS & Address Stamp onto the photo canvas
+    // 1. Burn GPS Stamp onto raw photo
     final Uint8List stampedBytes = await OverlayService.applyGpsStamp(
       imageBytes: rawBytes,
       position: position,
+      timestamp: timestamp,
     );
 
-    // 2. Save stamped photo to a temporary file
-    final Directory tempDir = await getTemporaryDirectory();
-    final String tempPath = '${tempDir.path}/veripic_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final File stampedFile = await File(tempPath).writeAsBytes(stampedBytes);
+    // 2. Sign and Embed Cryptographic Payload on final stamped image
+    final SignedImage signedImage = await _securityService.signAndEmbed(
+      jpegBytes: stampedBytes,
+      position: position,
+      timestampUtc: timestamp,
+      deviceId: deviceId,
+    );
 
-    // 3. Export to Public Device Gallery
-    await Gal.putImage(stampedFile.path, album: 'VeriPic');
+    final Uint8List finalBytes = signedImage.pngBytes;
+
+    // 3. Save to Temp File & Export to Gallery
+    final Directory tempDir = await getTemporaryDirectory();
+    final String tempPath =
+        '${tempDir.path}/veripic_${timestamp.millisecondsSinceEpoch}.png';
+    final File finalFile = await File(tempPath).writeAsBytes(finalBytes);
+
+    await Gal.putImage(finalFile.path, album: 'VeriPic');
 
     return CaptureResult(
-      bytes: stampedBytes,
+      bytes: finalBytes,
       position: position,
-      timestampUtc: DateTime.now().toUtc(),
+      timestampUtc: timestamp,
     );
   }
 

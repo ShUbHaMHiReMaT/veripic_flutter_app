@@ -31,7 +31,7 @@ dependencies:
   intl: ^0.20.3
   device_info_plus: ^10.1.0
   gal: ^2.3.3
-  geocoding: ^5.0.0
+  geocoding: ^3.0.0
 
 dev_dependencies:
   flutter_lints: ^4.0.0

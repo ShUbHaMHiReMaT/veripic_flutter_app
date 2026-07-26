@@ -1,17 +1,12 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 
-/// The envelope embedded in the image via LSB steganography.
-///
-/// It is intentionally small — LSB capacity is limited and we want to keep
-/// the payload well under a few hundred bytes so it survives on the smallest
-/// preview sizes users might pick.
 class SignedEnvelope {
   SignedEnvelope({
     required this.lat,
@@ -28,8 +23,8 @@ class SignedEnvelope {
   final double alt;
   final int timestampMs;
   final String deviceId;
-  final String pixelHash; // hex sha256 of downsampled pixels
-  final String signature; // hex hmac-sha256 over canonical payload
+  final String pixelHash;
+  final String signature;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'lat': lat,
@@ -39,7 +34,7 @@ class SignedEnvelope {
         'dev': deviceId,
         'ph': pixelHash,
         'sig': signature,
-        'v': 1,
+        'v': 3,
       };
 
   static SignedEnvelope fromJson(Map<String, dynamic> json) => SignedEnvelope(
@@ -59,27 +54,14 @@ class SignedImage {
   final SignedEnvelope envelope;
 }
 
-/// Handles hashing, HMAC signing, and LSB steganography.
-///
-/// The steganographic scheme:
-///   * Payload = JSON(envelope) preceded by a 4-byte big-endian length
-///     and a 4-byte magic header "VPIC".
-///   * Bits are written into the least significant bit of the blue channel
-///     of consecutive pixels in raster order starting at pixel (0, 0).
-///   * Recovery requires only reading those LSBs — no key material.
-///
-/// The signature is HMAC-SHA256 over the canonical string
-/// "v1|lat|lon|alt|ts|dev|pixelHash" using [APP_SIGNING_SECRET].
 class SecurityService {
   SecurityService({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
 
-  static const String _magic = 'VPIC';
-  static const int _headerBits = (_magic.length + 4) * 8; // magic + len
-
+  static const String _secretStorageKey = 'veripic_hw_signing_key_v3';
   final FlutterSecureStorage _storage;
 
-  // ---------------------------------------------------------------- Signing
+  static const int maxPerceptualHammingDistance = 10;
 
   Future<SignedImage> signAndEmbed({
     required Uint8List jpegBytes,
@@ -92,8 +74,9 @@ class SecurityService {
       throw StateError('Could not decode captured image');
     }
 
-    final String pixelHash = _hashPixels(decoded);
-    final SignedEnvelope envelope = SignedEnvelope(
+    final String pixelHash = computeBannerDHash(decoded);
+
+    final SignedEnvelope unsigned = SignedEnvelope(
       lat: position.latitude,
       lon: position.longitude,
       alt: position.altitude,
@@ -103,64 +86,118 @@ class SecurityService {
       signature: '',
     );
 
-    final String signature = await _sign(_canonical(envelope));
+    final String signature = await _sign(_canonical(unsigned));
     final SignedEnvelope finalEnvelope = SignedEnvelope(
-      lat: envelope.lat,
-      lon: envelope.lon,
-      alt: envelope.alt,
-      timestampMs: envelope.timestampMs,
-      deviceId: envelope.deviceId,
-      pixelHash: envelope.pixelHash,
+      lat: unsigned.lat,
+      lon: unsigned.lon,
+      alt: unsigned.alt,
+      timestampMs: unsigned.timestampMs,
+      deviceId: unsigned.deviceId,
+      pixelHash: unsigned.pixelHash,
       signature: signature,
     );
 
-    final img.Image stego = _embed(decoded, jsonEncode(finalEnvelope.toJson()));
-    final Uint8List png = Uint8List.fromList(img.encodePng(stego));
-    return SignedImage(pngBytes: png, envelope: finalEnvelope);
+    final String jsonPayload = jsonEncode(finalEnvelope.toJson());
+    decoded.textData ??= {};
+    decoded.textData!['Comment'] = 'VPIC_METADATA:$jsonPayload';
+
+    final Uint8List finalJpeg =
+        Uint8List.fromList(img.encodeJpg(decoded, quality: 95));
+
+    final List<int> footerBytes = utf8.encode('VPIC_PAYLOAD:$jsonPayload');
+    final BytesBuilder builder = BytesBuilder();
+    builder.add(finalJpeg);
+    builder.add(footerBytes);
+
+    return SignedImage(pngBytes: builder.toBytes(), envelope: finalEnvelope);
   }
 
-  // ------------------------------------------------------------ Verification
-
-  /// Returns the extracted envelope, or `null` if none is present or the
-  /// magic header does not match (image was never signed by us).
-  SignedEnvelope? extractEnvelope(Uint8List pngBytes) {
-    final img.Image? decoded = img.decodeImage(pngBytes);
-    if (decoded == null) return null;
-    final String? payload = _extract(decoded);
-    if (payload == null) return null;
+  SignedEnvelope? extractEnvelope(Uint8List imageBytes) {
     try {
-      return SignedEnvelope.fromJson(jsonDecode(payload) as Map<String, dynamic>);
-    } catch (_) {
-      return null;
-    }
+      final String raw = latin1.decode(imageBytes);
+      final int idx = raw.lastIndexOf('VPIC_PAYLOAD:');
+      if (idx != -1) {
+        final String jsonStr = raw.substring(idx + 'VPIC_PAYLOAD:'.length);
+        return SignedEnvelope.fromJson(
+            jsonDecode(jsonStr) as Map<String, dynamic>);
+      }
+    } catch (_) {}
+
+    try {
+      final img.Image? decoded = img.decodeImage(imageBytes);
+      if (decoded != null && decoded.textData != null) {
+        final String? comment = decoded.textData!['Comment'];
+        if (comment != null && comment.startsWith('VPIC_METADATA:')) {
+          final String jsonStr = comment.substring('VPIC_METADATA:'.length);
+          return SignedEnvelope.fromJson(
+              jsonDecode(jsonStr) as Map<String, dynamic>);
+        }
+      }
+    } catch (_) {}
+
+    return null;
   }
 
-  /// Recomputes the pixel hash of the given image using the same scheme
-  /// used during signing.
-  String recomputePixelHash(Uint8List pngBytes) {
-    final img.Image? decoded = img.decodeImage(pngBytes);
-    if (decoded == null) throw StateError('Cannot decode image');
-    // Rebuild an image without LSB noise so the hash matches what was signed.
-    // The signer hashed the pre-embedded pixels; we approximate by zeroing
-    // the blue LSB across the whole image before hashing. This works because
-    // the signer hashes a *downsampled* representation and downsampling
-    // dominates the LSB noise.
-    final img.Image clean = img.Image.from(decoded);
-    for (int y = 0; y < clean.height; y++) {
-      for (int x = 0; x < clean.width; x++) {
-        final img.Pixel p = clean.getPixel(x, y);
-        clean.setPixelRgba(x, y, p.r, p.g, (p.b.toInt() & ~1), p.a);
+  String computeBannerDHash(img.Image image) {
+    final int bannerHeight = (image.height * 0.18).toInt();
+    final int bannerY = image.height - bannerHeight;
+
+    final img.Image bannerCrop = img.copyCrop(
+      image,
+      x: 0,
+      y: bannerY,
+      width: image.width,
+      height: bannerHeight,
+    );
+
+    final img.Image resized = img.copyResize(
+      bannerCrop,
+      width: 9,
+      height: 8,
+      interpolation: img.Interpolation.average,
+    );
+
+    int dHash = 0;
+    int bitIndex = 0;
+
+    for (int y = 0; y < 8; y++) {
+      for (int x = 0; x < 8; x++) {
+        final img.Pixel pLeft = resized.getPixel(x, y);
+        final img.Pixel pRight = resized.getPixel(x + 1, y);
+
+        final int lumaLeft =
+            (0.299 * pLeft.r + 0.587 * pLeft.g + 0.114 * pLeft.b).round();
+        final int lumaRight =
+            (0.299 * pRight.r + 0.587 * pRight.g + 0.114 * pRight.b).round();
+
+        if (lumaLeft > lumaRight) {
+          dHash |= (1 << (63 - bitIndex));
+        }
+        bitIndex++;
       }
     }
-    return _hashPixels(clean);
+
+    return dHash.toRadixString(16).padLeft(16, '0');
+  }
+
+  int hammingDistance(String hash1, String hash2) {
+    if (hash1.length != hash2.length) return 64;
+    final BigInt val1 = BigInt.parse(hash1, radix: 16);
+    final BigInt val2 = BigInt.parse(hash2, radix: 16);
+    BigInt xorVal = val1 ^ val2;
+
+    int distance = 0;
+    while (xorVal > BigInt.zero) {
+      if ((xorVal & BigInt.one) == BigInt.one) distance++;
+      xorVal >>= 1;
+    }
+    return distance;
   }
 
   Future<bool> verifySignature(SignedEnvelope envelope) async {
     final String expected = await _sign(_canonical(envelope));
     return _constantTimeEq(expected, envelope.signature);
   }
-
-  // -------------------------------------------------------------- Internals
 
   String _canonical(SignedEnvelope e) =>
       'v1|${e.lat}|${e.lon}|${e.alt}|${e.timestampMs}|${e.deviceId}|${e.pixelHash}';
@@ -172,34 +209,18 @@ class SecurityService {
   }
 
   Future<String> _resolveSecret() async {
-    // Prefer per-install secret so different installs don't share a key;
-    // fall back to a build-time secret from .env for reproducible verification
-    // across devices (e.g. server-side verifier using the same secret).
-    String? envSecret;
-    try {
-      envSecret = dotenv.maybeGet('APP_SIGNING_SECRET');
-    } catch (_) {
-      envSecret = null;
-    }
-    if (envSecret != null && envSecret.isNotEmpty) return envSecret;
-
-    String? stored = await _storage.read(key: 'veripic_signing_secret');
+    String? stored = await _storage.read(key: _secretStorageKey);
     if (stored == null || stored.isEmpty) {
-      stored = _randomHex(32);
-      await _storage.write(key: 'veripic_signing_secret', value: stored);
+      stored = _generateRandomSecret();
+      await _storage.write(key: _secretStorageKey, value: stored);
     }
     return stored;
   }
 
-  String _randomHex(int bytes) {
-    final Uint8List buf = Uint8List(bytes);
-    final DateTime now = DateTime.now();
-    int seed = now.microsecondsSinceEpoch ^ now.hashCode;
-    for (int i = 0; i < bytes; i++) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      buf[i] = seed & 0xff;
-    }
-    return buf.map((int b) => b.toRadixString(16).padLeft(2, '0')).join();
+  String _generateRandomSecret() {
+    final Random rng = Random.secure();
+    final List<int> bytes = List<int>.generate(32, (_) => rng.nextInt(256));
+    return base64UrlEncode(bytes);
   }
 
   bool _constantTimeEq(String a, String b) {
@@ -209,94 +230,5 @@ class SecurityService {
       diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
     }
     return diff == 0;
-  }
-
-  /// Deterministic 32x32 luma downsample -> SHA-256 hex.
-  String _hashPixels(img.Image image) {
-    const int size = 32;
-    final img.Image thumb = img.copyResize(image,
-        width: size, height: size, interpolation: img.Interpolation.average);
-    final Uint8List luma = Uint8List(size * size);
-    int i = 0;
-    for (int y = 0; y < size; y++) {
-      for (int x = 0; x < size; x++) {
-        final img.Pixel p = thumb.getPixel(x, y);
-        // Rec. 709 luma
-        luma[i++] = (0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b).round().clamp(0, 255);
-      }
-    }
-    return sha256.convert(luma).toString();
-  }
-
-  // ------------------------------------------------ LSB steganography (blue)
-
-  img.Image _embed(img.Image image, String payload) {
-    final Uint8List body = Uint8List.fromList(utf8.encode(payload));
-    final ByteData header = ByteData(8)
-      ..setUint8(0, _magic.codeUnitAt(0))
-      ..setUint8(1, _magic.codeUnitAt(1))
-      ..setUint8(2, _magic.codeUnitAt(2))
-      ..setUint8(3, _magic.codeUnitAt(3))
-      ..setUint32(4, body.length, Endian.big);
-    final Uint8List all = Uint8List(8 + body.length)
-      ..setRange(0, 8, header.buffer.asUint8List())
-      ..setRange(8, 8 + body.length, body);
-
-    final int neededBits = all.length * 8;
-    final int capacity = image.width * image.height;
-    if (neededBits > capacity) {
-      throw StateError('Image too small to hold signed envelope');
-    }
-
-    final img.Image out = img.Image.from(image);
-    int bitIndex = 0;
-    for (int y = 0; y < out.height && bitIndex < neededBits; y++) {
-      for (int x = 0; x < out.width && bitIndex < neededBits; x++) {
-        final int byte = all[bitIndex >> 3];
-        final int bit = (byte >> (7 - (bitIndex & 7))) & 1;
-        final img.Pixel p = out.getPixel(x, y);
-        final int b = (p.b.toInt() & ~1) | bit;
-        out.setPixelRgba(x, y, p.r, p.g, b, p.a);
-        bitIndex++;
-      }
-    }
-    return out;
-  }
-
-  String? _extract(img.Image image) {
-    // Read header first.
-    final int totalPixels = image.width * image.height;
-    if (totalPixels < _headerBits) return null;
-
-    final Uint8List header = _readBits(image, 0, _headerBits ~/ 8);
-    if (String.fromCharCodes(header.sublist(0, 4)) != _magic) return null;
-    final int len = ByteData.sublistView(header, 4, 8).getUint32(0, Endian.big);
-    if (len <= 0 || len > 65536) return null;
-    if ((_headerBits + len * 8) > totalPixels) return null;
-
-    final Uint8List body = _readBits(image, _headerBits, len);
-    try {
-      return utf8.decode(body);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Uint8List _readBits(img.Image image, int startBit, int byteLen) {
-    final Uint8List out = Uint8List(byteLen);
-    int bitIndex = startBit;
-    for (int i = 0; i < byteLen; i++) {
-      int byte = 0;
-      for (int b = 0; b < 8; b++) {
-        final int px = bitIndex ~/ 1; // one bit per pixel
-        final int x = px % image.width;
-        final int y = px ~/ image.width;
-        final img.Pixel p = image.getPixel(x, y);
-        byte = (byte << 1) | (p.b.toInt() & 1);
-        bitIndex++;
-      }
-      out[i] = byte;
-    }
-    return out;
   }
 }

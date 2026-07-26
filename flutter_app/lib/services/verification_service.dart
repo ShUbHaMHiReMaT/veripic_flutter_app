@@ -1,9 +1,17 @@
 import 'dart:typed_data';
 
-import 'security_service.dart';
-import 'nvidia_vision_service.dart';
+import 'package:image/image.dart' as img;
 
-enum VerificationVerdict { authentic, tamperedPixels, tamperedMetadata, notSigned, error }
+import 'nvidia_vision_service.dart';
+import 'security_service.dart';
+
+enum VerificationVerdict {
+  authentic,
+  tamperedPixels,
+  tamperedMetadata,
+  notSigned,
+  error
+}
 
 class VerificationReport {
   VerificationReport({
@@ -11,21 +19,18 @@ class VerificationReport {
     required this.reason,
     this.envelope,
     this.aiAnalysis,
+    this.hammingDistance = 0,
   });
 
   final VerificationVerdict verdict;
   final String reason;
   final SignedEnvelope? envelope;
   final NvidiaAnalysis? aiAnalysis;
+  final int hammingDistance;
 
   bool get isAuthentic => verdict == VerificationVerdict.authentic;
 }
 
-/// Runs the full verification pipeline:
-///   1. Extract embedded envelope from image LSBs.
-///   2. Verify HMAC signature over the envelope.
-///   3. Recompute the pixel hash and compare.
-///   4. Ask NVIDIA vision model for a deepfake / synthetic score.
 class VerificationService {
   VerificationService({
     SecurityService? security,
@@ -36,16 +41,24 @@ class VerificationService {
   final SecurityService _security;
   final NvidiaVisionService _nvidia;
 
-  Future<VerificationReport> verify(Uint8List pngBytes) async {
+  Future<VerificationReport> verify(Uint8List imageBytes) async {
     try {
-      final SignedEnvelope? envelope = _security.extractEnvelope(pngBytes);
+      final SignedEnvelope? envelope = _security.extractEnvelope(imageBytes);
+
+      Future<NvidiaAnalysis?> safeAnalyze(Uint8List bytes) async {
+        try {
+          return await _nvidia.analyze(bytes);
+        } catch (_) {
+          return null;
+        }
+      }
+
       if (envelope == null) {
-        // Even unsigned images still go through the AI check for context.
-        final NvidiaAnalysis ai = await _nvidia.analyze(pngBytes);
         return VerificationReport(
           verdict: VerificationVerdict.notSigned,
-          reason: 'No VeriPic signature found in this image.',
-          aiAnalysis: ai,
+          reason:
+              'No VeriPic signature found in EXIF/Metadata. Image was edited or stripped.',
+          aiAnalysis: await safeAnalyze(imageBytes),
         );
       }
 
@@ -53,33 +66,46 @@ class VerificationService {
       if (!sigOk) {
         return VerificationReport(
           verdict: VerificationVerdict.tamperedMetadata,
-          reason: 'HMAC signature mismatch — envelope fields were altered.',
+          reason: 'HMAC Signature Mismatch: Metadata payload was altered.',
           envelope: envelope,
-          aiAnalysis: await _nvidia.analyze(pngBytes),
+          aiAnalysis: await safeAnalyze(imageBytes),
         );
       }
 
-      final String recomputed = _security.recomputePixelHash(pngBytes);
-      if (recomputed != envelope.pixelHash) {
+      final img.Image? decoded = img.decodeImage(imageBytes);
+      if (decoded == null) {
+        return VerificationReport(
+          verdict: VerificationVerdict.error,
+          reason: 'Failed to decode image bytes.',
+        );
+      }
+
+      final String currentDHash = _security.computeBannerDHash(decoded);
+      final int distance =
+          _security.hammingDistance(currentDHash, envelope.pixelHash);
+
+      if (distance > SecurityService.maxPerceptualHammingDistance) {
         return VerificationReport(
           verdict: VerificationVerdict.tamperedPixels,
-          reason: 'Pixel hash mismatch — image content was modified.',
+          reason:
+              'TAMPER DETECTED (Hamming Distance: $distance): Banner text or date was edited.',
           envelope: envelope,
-          aiAnalysis: await _nvidia.analyze(pngBytes),
+          aiAnalysis: await safeAnalyze(imageBytes),
+          hammingDistance: distance,
         );
       }
 
-      final NvidiaAnalysis ai = await _nvidia.analyze(pngBytes);
       return VerificationReport(
         verdict: VerificationVerdict.authentic,
-        reason: 'Signature, pixel hash and metadata all match.',
+        reason: 'Image Authentic: Perceptual fingerprint matches original capture.',
         envelope: envelope,
-        aiAnalysis: ai,
+        aiAnalysis: await safeAnalyze(imageBytes),
+        hammingDistance: distance,
       );
     } catch (e) {
       return VerificationReport(
         verdict: VerificationVerdict.error,
-        reason: 'Verification failed: $e',
+        reason: 'Verification process encountered an error: $e',
       );
     }
   }

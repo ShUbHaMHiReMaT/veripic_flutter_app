@@ -32,4 +32,6 @@ class DeviceService {
     }
     return '$hw#$install';
   }
+
+  Future<String> getDeviceId() async => fingerprint();
 }
