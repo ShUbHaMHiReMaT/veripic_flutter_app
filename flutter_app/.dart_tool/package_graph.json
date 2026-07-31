@@ -55,6 +55,13 @@
       ]
     },
     {
+      "name": "android_id",
+      "version": "0.5.2+1",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
       "name": "device_info_plus",
       "version": "10.1.2",
       "dependencies": [
@@ -910,13 +917,6 @@
         "collection",
         "meta",
         "pub_semver"
-      ]
-    },
-    {
-      "name": "android_id",
-      "version": "0.5.2+1",
-      "dependencies": [
-        "flutter"
       ]
     }
   ],
