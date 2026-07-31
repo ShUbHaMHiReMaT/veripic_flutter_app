@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
@@ -162,21 +163,7 @@ class _ReportView extends StatelessWidget {
     );
   }
 
-  Widget _row(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(
-                width: 110,
-                child: Text(k, style: const TextStyle(color: Colors.white54, fontSize: 13))),
-            Expanded(
-              child: SelectableText(v,
-                  style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontSize: 12)),
-            ),
-          ],
-        ),
-      );
+  Widget _row(String k, String v) => _CopyableRow(label: k, value: v);
 
   _Badge _badgeFor(VerificationVerdict v) {
     switch (v) {
@@ -199,6 +186,61 @@ class _Badge {
   final String title;
   final IconData icon;
   final Color color;
+}
+
+class _CopyableRow extends StatefulWidget {
+  const _CopyableRow({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  State<_CopyableRow> createState() => _CopyableRowState();
+}
+
+class _CopyableRowState extends State<_CopyableRow> {
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.value));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    Future<void>.delayed(const Duration(seconds: 1, milliseconds: 200), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+              width: 110,
+              child: Text(widget.label,
+                  style: const TextStyle(color: Colors.white54, fontSize: 13))),
+          Expanded(
+            child: SelectableText(widget.value,
+                style: const TextStyle(
+                    color: Colors.white, fontFamily: 'monospace', fontSize: 12)),
+          ),
+          InkWell(
+            onTap: _copy,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                _copied ? Icons.check : Icons.copy_rounded,
+                size: 15,
+                color: _copied ? const Color(0xFF00E5A8) : Colors.white38,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Card extends StatelessWidget {

@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../main.dart' show cameras;
 import '../services/camera_service.dart';
@@ -32,6 +34,7 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _initializing = true;
   bool _capturing = false;
   String? _error;
+  PermissionRequiredException? _permissionError;
   String? _lastSavedPath;
 
   @override
@@ -41,6 +44,8 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _boot() async {
+    _error = null;
+    _permissionError = null;
     try {
       if (cameras.isEmpty) throw StateError('No camera available on this device');
       await _camera.initialize(cameras.first);
@@ -53,6 +58,11 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
       ).listen((Position p) => setState(() => _livePosition = p));
       setState(() => _initializing = false);
+    } on PermissionRequiredException catch (e) {
+      setState(() {
+        _initializing = false;
+        _permissionError = e;
+      });
     } catch (e) {
       setState(() {
         _initializing = false;
@@ -88,12 +98,14 @@ class _CameraScreenState extends State<CameraScreen> {
       await File(path).writeAsBytes(signed.pngBytes, flush: true);
 
       setState(() => _lastSavedPath = path);
+      HapticFeedback.mediumImpact();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Signed photo saved: $path')),
+          const SnackBar(content: Text('Signed photo saved to VeriPic album')),
         );
       }
     } catch (e) {
+      HapticFeedback.heavyImpact();
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Capture failed: $e')));
@@ -109,14 +121,56 @@ class _CameraScreenState extends State<CameraScreen> {
       appBar: AppBar(title: const Text('Signed Capture')),
       body: _initializing
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(_error!, textAlign: TextAlign.center),
-                  ),
-                )
-              : _buildCamera(),
+          : _permissionError != null
+              ? _buildPermissionError(_permissionError!)
+              : _error != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(_error!, textAlign: TextAlign.center),
+                      ),
+                    )
+                  : _buildCamera(),
+    );
+  }
+
+  Widget _buildPermissionError(PermissionRequiredException e) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.no_photography_rounded, size: 56, color: Colors.white38),
+            const SizedBox(height: 16),
+            Text(
+              '${e.permissionName} access needed',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              e.permanentlyDenied
+                  ? '${e.permissionName} permission was denied. Enable it in system settings to capture signed photos.'
+                  : 'VeriPic needs ${e.permissionName.toLowerCase()} access to embed a verifiable geotag in every photo.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withOpacity(0.65)),
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: () async {
+                if (e.permanentlyDenied) {
+                  await openAppSettings();
+                } else {
+                  setState(() => _initializing = true);
+                  await _boot();
+                }
+              },
+              child: Text(e.permanentlyDenied ? 'Open Settings' : 'Grant Access'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

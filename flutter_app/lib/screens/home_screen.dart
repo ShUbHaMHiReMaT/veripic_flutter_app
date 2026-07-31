@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../services/device_service.dart';
 import 'camera_screen.dart';
 import 'verify_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final DeviceService _deviceService = DeviceService();
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +51,22 @@ class HomeScreen extends StatelessWidget {
               Center(
                 child: Text('v1.0 · HMAC-SHA256 · LSB · NVIDIA Vision',
                     style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 12)),
+              ),
+              const SizedBox(height: 6),
+              Center(
+                child: FutureBuilder<String>(
+                  future: _deviceService.fingerprint(),
+                  builder: (BuildContext context, AsyncSnapshot<String> snap) {
+                    final String id = snap.data == null
+                        ? 'resolving device hash…'
+                        : 'device hash · ${snap.data!.substring(0, 16)}';
+                    return Text(id,
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.3),
+                            fontSize: 11,
+                            fontFamily: 'monospace'));
+                  },
+                ),
               ),
             ],
           ),

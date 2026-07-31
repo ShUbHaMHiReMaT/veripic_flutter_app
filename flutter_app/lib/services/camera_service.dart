@@ -11,6 +11,17 @@ import 'device_service.dart';
 import 'overlay_service.dart';
 import 'security_service.dart';
 
+/// Thrown when a required permission is missing, carrying enough context
+/// for the UI to show a helpful prompt instead of a raw error string.
+class PermissionRequiredException implements Exception {
+  PermissionRequiredException(this.permissionName, {required this.permanentlyDenied});
+  final String permissionName;
+  final bool permanentlyDenied;
+
+  @override
+  String toString() => '$permissionName permission is required';
+}
+
 class CaptureResult {
   CaptureResult({
     required this.bytes,
@@ -112,12 +123,22 @@ class CameraService {
       Permission.location,
     ].request();
 
-    if (statuses[Permission.camera] != PermissionStatus.granted) {
-      throw StateError('Camera permission denied');
+    final PermissionStatus camera = statuses[Permission.camera]!;
+    if (camera != PermissionStatus.granted) {
+      throw PermissionRequiredException(
+        'Camera',
+        permanentlyDenied: camera == PermissionStatus.permanentlyDenied,
+      );
     }
-    if (statuses[Permission.locationWhenInUse] != PermissionStatus.granted &&
-        statuses[Permission.location] != PermissionStatus.granted) {
-      throw StateError('Location permission denied');
+
+    final PermissionStatus whenInUse = statuses[Permission.locationWhenInUse]!;
+    final PermissionStatus location = statuses[Permission.location]!;
+    if (whenInUse != PermissionStatus.granted && location != PermissionStatus.granted) {
+      throw PermissionRequiredException(
+        'Location',
+        permanentlyDenied: whenInUse == PermissionStatus.permanentlyDenied ||
+            location == PermissionStatus.permanentlyDenied,
+      );
     }
   }
 }
