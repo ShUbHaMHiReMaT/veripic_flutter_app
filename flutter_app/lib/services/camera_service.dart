@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Offset;
 
 import 'package:camera/camera.dart';
 import 'package:gal/gal.dart';
@@ -27,11 +28,25 @@ class CaptureResult {
     required this.bytes,
     required this.position,
     required this.timestampUtc,
+    required this.envelope,
+    required this.savedPath,
+    this.signingKeyId,
   });
 
+  /// Final signed JPEG bytes — already stamped, signed and embedded.
+  /// Callers must NOT re-sign these; doing so appends a second payload.
   final Uint8List bytes;
   final Position position;
   final DateTime timestampUtc;
+
+  /// The envelope that was embedded, for immediate display in the UI.
+  final SignedEnvelope envelope;
+
+  /// Temp-file path of the exported image (also copied into the gallery).
+  final String savedPath;
+
+  /// Key id that produced the signature.
+  final String? signingKeyId;
 }
 
 class CameraService {
@@ -103,7 +118,33 @@ class CameraService {
       bytes: finalBytes,
       position: position,
       timestampUtc: timestamp,
+      envelope: signedImage.envelope,
+      savedPath: finalFile.path,
+      signingKeyId: signedImage.signingKey?.kid,
     );
+  }
+
+  /// Drives tap-to-focus. Silently ignored on devices without focus-point
+  /// support so the UI reticle still feels responsive.
+  Future<void> focusAt(Offset normalized) async {
+    final CameraController? c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    try {
+      await c.setFocusPoint(normalized);
+      await c.setExposurePoint(normalized);
+    } catch (_) {
+      // Not supported on this sensor — harmless.
+    }
+  }
+
+  Future<void> setFlashMode(FlashMode mode) async {
+    final CameraController? c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    try {
+      await c.setFlashMode(mode);
+    } catch (_) {
+      // Some devices reject torch while the preview is warming up.
+    }
   }
 
   Future<Position> _readPosition() async {

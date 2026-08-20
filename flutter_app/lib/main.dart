@@ -1,8 +1,10 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/home_screen.dart';
+import 'theme/veripic_theme.dart';
 
 List<CameraDescription> cameras = <CameraDescription>[];
 
@@ -18,6 +20,13 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Camera enumeration failed: $e');
   }
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: VP.bg,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
   runApp(const VeriPicApp());
 }
 
@@ -26,22 +35,10 @@ class VeriPicApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF00E5A8),
-      brightness: Brightness.dark,
-    );
     return MaterialApp(
       title: 'VeriPic',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: scheme,
-        scaffoldBackgroundColor: const Color(0xFF0A0F14),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0A0F14),
-          elevation: 0,
-        ),
-      ),
+      theme: VP.theme(),
       home: const HomeScreen(),
     );
   }
