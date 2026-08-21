@@ -1,6 +1,5 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/app_shell.dart';
 import 'theme/theme_controller.dart';
@@ -10,11 +9,6 @@ List<CameraDescription> cameras = <CameraDescription>[];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {
-    // .env is optional at runtime; services fall back to safe defaults.
-  }
   try {
     cameras = await availableCameras();
   } catch (e) {

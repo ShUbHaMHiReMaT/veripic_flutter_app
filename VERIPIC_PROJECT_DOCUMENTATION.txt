@@ -25,7 +25,6 @@ TABLE OF CONTENTS
   8.  PERCEPTUAL HASHING AND TAMPER DETECTION
   9.  DEVICE IDENTITY
   10. THE SIGNED ENVELOPE FORMAT
-  11. AI / DEEPFAKE SCREENING
   12. APPLICATION ARCHITECTURE
   13. FILE-BY-FILE REFERENCE
   14. SCREENS AND USER FLOWS
@@ -64,9 +63,11 @@ does not do:
      so a signature can only be produced by that one device.
 
 A second mode of the app takes any image and checks it: it recovers the embedded
-payload, validates the signature, re-computes the perceptual fingerprint and
-compares it to the recorded one, and optionally screens the image for AI
-generation. The result is a verdict - authentic, edited, mismatched, or unsigned.
+payload, validates the signature, and re-computes the perceptual fingerprints of
+both the stamp and the photographic scene, comparing them to the recorded ones.
+The result is a plain verdict - authentic, edited, mismatched, or unsigned.
+There is no probability attached to it: the record either verifies or it does
+not.
 
 In one sentence: VeriPic is a camera that produces photographs which can prove
 where and when they were taken, and which reveal it if anyone edits them
@@ -159,20 +160,26 @@ FRAMES GALLERY
     payload that was sealed into it.
 
 LOCATIONS
-  - Every capture plotted as a square pin over a survey grid, with the newest
-    highlighted.
+  - A real, interactive slippy map: pan, pinch-zoom, double-tap zoom, fling.
+  - Every capture is a square outlined pin drawn by the app, so markers follow
+    the design system rather than the tile provider's styling. The selected pin
+    grows and turns accent-coloured.
+  - Tapping a pin, or a row in the list below, GLIDES the map to that capture
+    over 180 ms rather than teleporting, so you keep your bearings.
   - Coordinates are read from the signed envelope inside each frame, so a pin
     cannot exist without a valid signed capture behind it.
-  - Tappable list of all pinned captures below the plot.
-  - Works entirely offline (see section 22 - this is a coordinate plot, not a
-    street map).
+  - Basemap tiles come from OpenStreetMap: no API key, no billing account, no
+    Google Cloud project. Tiles are colour-filtered - desaturated in light mode,
+    inverted and warmed in dark mode - so the map sits under the palette instead
+    of fighting it.
+  - Attribution is displayed, as OSM's licence requires.
 
 VERIFICATION
   - Pick any image from the gallery, or take one with the system camera.
   - Four-stage animated diagnostic run (see section 6).
-  - Verdict card with a confidence percentage.
+  - Verdict card stating authentic or not authentic, with no probability
+    attached.
   - Stamp drift gauge showing the Hamming distance against the tolerance.
-  - AI screening result.
   - Scene integrity grid showing every tile of the photographic content, green
     where it matches the signed original and alert-coloured where it does not,
     so an edit is located rather than merely reported.
@@ -329,21 +336,15 @@ It reports progress through a callback so the UI can animate the checklist.
     "skipped - predates scene protection" rather than implying the scene passed,
     and the authentic verdict says so in words too.
 
-  STAGE 5 - AI SCREENING
-    The image is sent to an NVIDIA-hosted vision model for a synthetic-content
-    opinion. This stage degrades gracefully: a missing API key, an unreachable
-    endpoint, or an unparseable response marks the stage "skipped" rather than
-    failing the verification.
+  THE VERDICT IS BINARY
 
-  CONFIDENCE SCORE
-    A 0..1 figure blending the three signals:
-      - notSigned / error        -> 0.0
-      - tamperedMetadata         -> 0.05
-      - tamperedScene            -> degrades with the share of tiles altered,
-                                    capped 0.35
-      - tamperedPixels           -> degrades with Hamming distance, capped 0.4
-      - authentic                -> perceptual closeness, reduced by the
-                                    synthetic-likelihood score when available
+    There is deliberately no confidence percentage. A cryptographic signature
+    either reproduces or it does not; a tile is either inside tolerance or
+    outside it. Blending those into a single "87%" invited the reader to treat a
+    failed signature as a strong-ish pass, which is precisely backwards. The
+    report states the verdict, and lists the measurements that produced it -
+    Hamming distance, tiles matched, which key verified - so a reader can judge
+    for themselves.
 
 
 ===============================================================================
@@ -571,32 +572,6 @@ historical version of the app.
 
 
 ===============================================================================
-11. AI / DEEPFAKE SCREENING
-===============================================================================
-
-Implemented in lib/services/nvidia_vision_service.dart.
-
-    ENDPOINT: https://integrate.api.nvidia.com/v1/chat/completions
-              (the OpenAI-compatible surface most NVIDIA-hosted vision models
-              expose)
-    MODEL:    configured via NVIDIA_MODEL_NAME, default nvidia/neva-22b
-    AUTH:     Bearer token from NVIDIA_API_KEY in .env
-
-The service returns an NvidiaAnalysis carrying:
-    reachable       whether the endpoint answered
-    syntheticScore  0..1, higher = more likely AI-generated
-    summary         the model's prose commentary
-    error           why the check could not run, if it could not
-    rawResponse     the unparsed body, for debugging
-
-DESIGN NOTE: this stage is explicitly advisory and non-blocking. If the key is
-absent, still a placeholder, or the network is down, verification completes
-normally with the AI stage marked "skipped". The cryptographic verdict never
-depends on a third-party service being reachable - which matters for field use
-with no signal.
-
-
-===============================================================================
 12. APPLICATION ARCHITECTURE
 ===============================================================================
 
@@ -685,11 +660,8 @@ lib/services/overlay_service.dart
 
 lib/services/verification_service.dart
     Orchestrates the four-stage verification, emits progress for the UI, and
-    computes the blended confidence score. Defines VerifyStage, StageState, and
+    reports the verdict. Defines VerifyStage, StageState, and
     VerificationReport.
-
-lib/services/nvidia_vision_service.dart
-    HTTP client for the AI screening endpoint. Fully described in section 11.
 
 lib/services/certificate_service.dart
     Renders the section 63(4) evidence certificate as a PDF. Collects the
@@ -788,7 +760,7 @@ FLOW D - VERIFY A FRAME
     Home -> "Check a frame"
       -> choose from gallery, or take a photo
       -> four checks animate in sequence
-      -> verdict, confidence, drift gauge, AI result
+      -> verdict, drift gauge, scene integrity grid
       -> expand the metadata drawer to inspect or copy any field
 
 FLOW E - INSPECT DEVICE IDENTITY
@@ -936,13 +908,15 @@ the system expresses no preference, because the app is used outdoors.
     image                ^4.9.1   decode, composite, encode, EXIF
     flutter_secure_storage ^9.2.2 Keystore-backed key and setting storage
     flutter_dotenv       ^5.1.0   .env loading
-    http                 ^1.2.2   NVIDIA endpoint client
+    http                 ^1.2.2   transitive HTTP support
     path_provider        ^2.1.3   temp and documents directories
     image_picker         ^1.1.2   choosing an image to verify
     intl                ^0.20.3   date formatting
     device_info_plus    ^10.1.0   hardware attributes
     android_id           ^0.5.2   Settings.Secure.ANDROID_ID
     gal                  ^2.3.3   gallery album export
+    flutter_map          ^8.3.1   interactive OpenStreetMap map
+    latlong2            ^0.10.1   coordinate type used by flutter_map
     pdf                 ^3.12.0   evidence certificate rendering
     printing            ^5.14.3   certificate share / print sheet
     share_plus          ^12.0.2   sharing the exported certificate
@@ -971,6 +945,12 @@ the system expresses no preference, because the app is used outdoors.
         android.permission.ACCESS_FINE_LOCATION
         android.permission.ACCESS_COARSE_LOCATION
         android.permission.WRITE_EXTERNAL_STORAGE
+        android.permission.INTERNET  (map tiles — see note below)
+
+    NOTE ON INTERNET: Flutter injects the INTERNET permission into the DEBUG and
+    PROFILE manifests automatically, but not the release one. It is now declared
+    explicitly in the main manifest. Without it a release build silently has no
+    network and the map renders as blank tiles.
 
     Package / namespace:  com.example.veripic
     SDK versions inherit the Flutter defaults (compileSdk, minSdk, targetSdk all
@@ -993,14 +973,11 @@ the system expresses no preference, because the app is used outdoors.
         crash at a small cost in build speed, not correctness.
 
     ENVIRONMENT FILE
-    flutter_app/.env is gitignored and must be created from .env.example:
-
-        NVIDIA_API_KEY=<your key from build.nvidia.com>
-        NVIDIA_MODEL_NAME=nvidia/neva-22b
-
-    There is deliberately no signing secret in .env. Since the HKDF migration the
-    HMAC key is derived per-device from the hardware identifier and cached in the
-    Keystore. Nothing cryptographic lives in .env.
+    There is no longer one. The .env file and flutter_dotenv existed solely to
+    hold the NVIDIA API key; with AI screening removed, both are gone. The app
+    now requires no configuration and no third-party account to build or run.
+    Nothing cryptographic ever lived in .env - the HMAC key is derived
+    per-device from the hardware identifier and cached in the Keystore.
 
 
 ===============================================================================
@@ -1010,7 +987,6 @@ the system expresses no preference, because the app is used outdoors.
     PREREQUISITES
       - Flutter 3.27+ (verified on 3.41.0)
       - Android SDK and a connected device or emulator
-      - A .env file (copy .env.example and fill in your NVIDIA key)
 
     COMMANDS  (run from D:\veripic_flutter_app\flutter_app)
 
@@ -1143,10 +1119,11 @@ GOOGLE PLAY
     * A privacy policy is mandatory, because the app accesses location and
       camera.
     * The Data safety form must be completed. Answer it accurately: VeriPic
-      collects location and photographs, and - apart from the optional AI
-      screening call - processes them entirely on the device. The photograph is
-      transmitted to NVIDIA only when the user runs a verification with AI
-      screening configured; that must be disclosed.
+      collects location and photographs and processes them ENTIRELY on the
+      device. No photograph and no coordinate is transmitted anywhere. The only
+      network traffic the app generates is fetching OpenStreetMap basemap tiles
+      for the Locations screen, which sends the viewed map area - not the
+      photographs - to the tile server.
     * Location permission justification: the app needs precise location because
       the coordinate is the substance of the record, not an enhancement to it.
     * If distributing in India and marketing the section 63(4) export as legal
@@ -1230,10 +1207,11 @@ publishing it does not weaken the key.
 
 OUTSTANDING SECURITY ITEM
 A live NVIDIA API key was committed to .env.example in commit f23baa1 and
-remains in the git history. The file has since been sanitised to placeholders,
-but sanitising does not un-leak it. THAT KEY SHOULD BE REVOKED AND REISSUED at
-build.nvidia.com. A vestigial APP_SIGNING_SECRET was also present and has been
-removed - it was unused after the HKDF migration.
+REMAINS IN THE GIT HISTORY. The AI subsystem, the .env file and .env.example
+have all since been deleted, but deleting a file does not remove it from
+history. THAT KEY SHOULD STILL BE REVOKED at build.nvidia.com — anyone with a
+clone of this repository can recover it. A vestigial APP_SIGNING_SECRET was also
+present and has been removed; it was unused after the HKDF migration.
 
 
 ===============================================================================
@@ -1254,11 +1232,10 @@ removed - it was unused after the HKDF migration.
      device's VeriPic album. Fixing this means moving captures to a documents
      directory in camera_service.dart.
 
-  3. LOCATIONS IS A COORDINATE PLOT, NOT A STREET MAP.
-     Pins are plotted on a survey grid with no basemap underneath. A real map
-     requires a new dependency - flutter_map (free OSM tiles, no API key, ~1.5MB,
-     needs network) or google_maps_flutter (better maps, needs a Google Cloud
-     API key and billing, ~3MB). The plot does work fully offline.
+  3. THE MAP NEEDS NETWORK.
+     Basemap tiles are fetched from OpenStreetMap, so with no signal the pins
+     and the list still work but the map renders on a blank background. Tile
+     caching for offline field use is not implemented.
 
   4. GPS SPOOFING IS ONLY PARTLY DEFEATED.
      Mock-provider fixes are now refused, but a modified OS or radio-level GNSS
@@ -1295,7 +1272,8 @@ removed - it was unused after the HKDF migration.
 ===============================================================================
 
     HIGH VALUE
-      - Revoke and reissue the leaked NVIDIA API key.
+      - Revoke the leaked NVIDIA API key. It is no longer used by the app, but
+        it is still live and still recoverable from git history.
       - Move to asymmetric signatures (Ed25519) so third parties can verify
         without holding a secret. This is the single biggest improvement to the
         trust model.
@@ -1308,7 +1286,7 @@ removed - it was unused after the HKDF migration.
       - Move captured frames out of the temp directory.
       - Write EXIF GPS tags alongside the burned-in stamp.
       - Retain the original unstamped frame.
-      - Add a real basemap to Locations (needs a dependency decision).
+      - Cache map tiles so the Locations map works offline in the field.
 
     LOWER
       - Widget and integration tests.
@@ -1360,6 +1338,14 @@ The project has passed through several distinct phases:
      tiled scene fingerprinting at envelope v5, the section 63(4) certificate
      export, and a fix to a latent hash-serialisation bug that could report two
      different digests as identical.
+
+ 10. SIMPLIFICATION AND MAPPING (22 August 2026) - the NVIDIA AI screening
+     subsystem was removed entirely, along with flutter_dotenv and the .env
+     file, leaving an app that needs no third-party account and transmits no
+     photograph anywhere. The confidence percentage was dropped in favour of a
+     binary verdict. The Locations coordinate plot was replaced by a real
+     interactive OpenStreetMap map with themed markers and animated
+     fly-to-capture.
 
 A note on the design churn: three of the four UI directions were discarded.
 The cost of that was reduced substantially by the token layer - because tokens

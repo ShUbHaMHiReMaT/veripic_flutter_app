@@ -9,7 +9,6 @@ import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 
 import '../services/certificate_service.dart';
-import '../services/nvidia_vision_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
 import '../theme/veripic_theme.dart';
@@ -258,10 +257,6 @@ class _VerifyScreenState extends State<VerifyScreen> {
                   _DriftCard(report: report),
                   const SizedBox(height: Tokens.spaceSnug),
                   _SceneCard(report: report),
-                  if (report.aiAnalysis != null) ...<Widget>[
-                    const SizedBox(height: Tokens.spaceSnug),
-                    _AiCard(analysis: report.aiAnalysis!),
-                  ],
                   if (report.envelope != null) ...<Widget>[
                     const SizedBox(height: Tokens.spaceSnug),
                     _MetadataDrawer(report: report),
@@ -466,19 +461,13 @@ class _Verdict extends StatelessWidget {
               IconTile(icon: icon, color: tint),
               const SizedBox(width: Tokens.spaceSnug),
               Expanded(child: Text(headline, style: p.screenTitle)),
+              StatusBadge(
+                label: report.isAuthentic ? 'authentic' : 'not authentic',
+                color: tint,
+              ),
             ],
           ),
           const SizedBox(height: Tokens.spaceBase),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Text('${(report.confidence * 100).round()}%',
-                  style: p.data.copyWith(fontSize: Tokens.iconBase)),
-              const SizedBox(width: Tokens.spaceTight),
-              Text('CONFIDENCE', style: p.dataSmall),
-            ],
-          ),
-          const SizedBox(height: Tokens.spaceSnug),
           Text(report.reason, style: p.body),
         ],
       ),
@@ -665,53 +654,6 @@ class _TileGrid extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-// =======================================================================
-// AI screening
-// =======================================================================
-
-class _AiCard extends StatelessWidget {
-  const _AiCard({required this.analysis});
-
-  final NvidiaAnalysis analysis;
-
-  @override
-  Widget build(BuildContext context) {
-    final Palette p = Palette.of(context);
-
-    final double? score = analysis.syntheticScore;
-    final bool unavailable = analysis.error != null || score == null;
-    final Color tint = unavailable
-        ? Tokens.tintNull
-        : (score > 0.5 ? Tokens.statusAlert : Tokens.statusOk);
-
-    return FieldCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(child: Text('AI screening', style: p.cardTitle)),
-              StatusBadge(
-                label: unavailable
-                    ? 'unavailable'
-                    : '${(score * 100).round()}% synthetic',
-                color: tint,
-              ),
-            ],
-          ),
-          const SizedBox(height: Tokens.spaceTight),
-          Text(
-            analysis.error ??
-                analysis.summary ??
-                'The model returned no commentary.',
-            style: p.body,
-          ),
-        ],
-      ),
     );
   }
 }

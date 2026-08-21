@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
-import 'nvidia_vision_service.dart';
 import 'security_service.dart';
 
 enum VerificationVerdict {
@@ -20,7 +19,6 @@ enum VerifyStage {
   hmac,
   dhash,
   scene,
-  ai,
 }
 
 extension VerifyStageInfo on VerifyStage {
@@ -29,7 +27,6 @@ extension VerifyStageInfo on VerifyStage {
         VerifyStage.hmac => 'Validating hardware HMAC',
         VerifyStage.dhash => 'Scanning banner dHash gradients',
         VerifyStage.scene => 'Comparing scene tiles',
-        VerifyStage.ai => 'Running NVIDIA multimodal check',
       };
 
   String get code => switch (this) {
@@ -37,7 +34,6 @@ extension VerifyStageInfo on VerifyStage {
         VerifyStage.hmac => 'HMAC',
         VerifyStage.dhash => 'DHASH',
         VerifyStage.scene => 'SCENE',
-        VerifyStage.ai => 'AI',
       };
 }
 
@@ -55,7 +51,6 @@ class VerificationReport {
     required this.verdict,
     required this.reason,
     this.envelope,
-    this.aiAnalysis,
     this.hammingDistance = 0,
     this.signatureCheck,
     this.recomputedHash,
@@ -66,7 +61,6 @@ class VerificationReport {
   final VerificationVerdict verdict;
   final String reason;
   final SignedEnvelope? envelope;
-  final NvidiaAnalysis? aiAnalysis;
   final int hammingDistance;
 
   /// Which key validated (or failed to validate) the envelope.
@@ -87,44 +81,13 @@ class VerificationReport {
 
   bool get isAuthentic => verdict == VerificationVerdict.authentic;
 
-  /// 0..1 integrity confidence, blending HMAC validity, perceptual distance
-  /// and (when available) the NVIDIA synthetic-content score.
-  double get confidence {
-    switch (verdict) {
-      case VerificationVerdict.notSigned:
-        return 0.0;
-      case VerificationVerdict.error:
-        return 0.0;
-      case VerificationVerdict.tamperedMetadata:
-        return 0.05;
-      case VerificationVerdict.tamperedScene:
-        // Degrade with how much of the frame moved.
-        final double share =
-            sceneTileDistances.isEmpty ? 1 : alteredTiles / sceneTileDistances.length;
-        return (0.35 * (1 - share)).clamp(0.0, 0.35);
-      case VerificationVerdict.tamperedPixels:
-        // Degrade smoothly with how far the banner drifted.
-        return (1.0 - (hammingDistance / 64.0)).clamp(0.0, 0.4);
-      case VerificationVerdict.authentic:
-        final double perceptual = 1.0 -
-            (hammingDistance / (SecurityService.maxPerceptualHammingDistance * 2))
-                .clamp(0.0, 0.5);
-        final double? synthetic = aiAnalysis?.syntheticScore;
-        if (synthetic == null) return perceptual.clamp(0.0, 1.0);
-        return (perceptual * (1.0 - synthetic * 0.5)).clamp(0.0, 1.0);
-    }
-  }
 }
 
 class VerificationService {
-  VerificationService({
-    SecurityService? security,
-    NvidiaVisionService? nvidia,
-  })  : _security = security ?? SecurityService(),
-        _nvidia = nvidia ?? NvidiaVisionService();
+  VerificationService({SecurityService? security})
+      : _security = security ?? SecurityService();
 
   final SecurityService _security;
-  final NvidiaVisionService _nvidia;
 
   Future<VerificationReport> verify(
     Uint8List imageBytes, {
@@ -133,28 +96,6 @@ class VerificationService {
     void report(VerifyStage s, StageState st, [String? detail]) =>
         onProgress?.call(s, st, detail);
 
-    Future<NvidiaAnalysis?> runAi(Uint8List bytes) async {
-      report(VerifyStage.ai, StageState.running);
-      try {
-        final NvidiaAnalysis analysis = await _nvidia.analyze(bytes);
-        if (analysis.error != null) {
-          report(VerifyStage.ai, StageState.skipped, analysis.error);
-        } else {
-          final double? score = analysis.syntheticScore;
-          report(
-            VerifyStage.ai,
-            score != null && score > 0.5 ? StageState.warned : StageState.passed,
-            score == null
-                ? 'Model returned no score'
-                : 'Synthetic likelihood ${(score * 100).toStringAsFixed(1)}%',
-          );
-        }
-        return analysis;
-      } catch (e) {
-        report(VerifyStage.ai, StageState.skipped, 'Endpoint unreachable');
-        return null;
-      }
-    }
 
     try {
       // ---- Stage 1: payload extraction -------------------------------
@@ -171,7 +112,6 @@ class VerificationService {
           reason:
               'No VeriPic signature found in EXIF/COM/EOF metadata. The image was '
               'never signed by VeriPic, or its metadata has been stripped.',
-          aiAnalysis: await runAi(imageBytes),
         );
       }
 
@@ -199,7 +139,6 @@ class VerificationService {
               'photo was signed on a different device. ${check.note ?? ''}'.trim(),
           envelope: envelope,
           signatureCheck: check,
-          aiAnalysis: await runAi(imageBytes),
         );
       }
 
@@ -212,7 +151,6 @@ class VerificationService {
       if (decoded == null) {
         report(VerifyStage.dhash, StageState.failed, 'Undecodable image data');
         report(VerifyStage.scene, StageState.skipped, 'No decodable frame');
-        report(VerifyStage.ai, StageState.skipped, 'No decodable frame');
         return VerificationReport(
           verdict: VerificationVerdict.error,
           reason: 'Failed to decode image bytes.',
@@ -238,7 +176,6 @@ class VerificationService {
           envelope: envelope,
           signatureCheck: check,
           recomputedHash: currentDHash,
-          aiAnalysis: await runAi(imageBytes),
           hammingDistance: distance,
         );
       }
@@ -284,7 +221,6 @@ class VerificationService {
               envelope: envelope,
               signatureCheck: check,
               recomputedHash: currentDHash,
-              aiAnalysis: await runAi(imageBytes),
               hammingDistance: distance,
               sceneTileDistances: tileDistances,
               alteredTiles: altered,
@@ -295,9 +231,6 @@ class VerificationService {
               'All ${tileDistances.length} scene tiles match');
         }
       }
-
-      // ---- Stage 5: NVIDIA multimodal --------------------------------
-      final NvidiaAnalysis? ai = await runAi(imageBytes);
 
       return VerificationReport(
         verdict: VerificationVerdict.authentic,
@@ -311,7 +244,6 @@ class VerificationService {
         envelope: envelope,
         signatureCheck: check,
         recomputedHash: currentDHash,
-        aiAnalysis: ai,
         hammingDistance: distance,
         sceneTileDistances: tileDistances,
         alteredTiles: altered,

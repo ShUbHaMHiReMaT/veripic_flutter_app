@@ -280,7 +280,6 @@ class CertificateService {
     final List<List<String>> rows = <List<String>>[
       <String>['Verified on', _stamp.format(DateTime.now())],
       <String>['Verdict', _verdictText(r.verdict)],
-      <String>['Confidence', '${(r.confidence * 100).round()}%'],
       <String>[
         'Signature check',
         c == null
@@ -309,12 +308,6 @@ class CertificateService {
       ]);
     }
 
-    final String? ai = r.aiAnalysis?.error ??
-        (r.aiAnalysis?.syntheticScore != null
-            ? '${(r.aiAnalysis!.syntheticScore! * 100).round()}% synthetic '
-                'likelihood'
-            : null);
-    rows.add(<String>['AI screening', ai ?? 'not available']);
     return rows;
   }
 
