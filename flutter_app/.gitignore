@@ -46,3 +46,6 @@ app.*.map.json
 
 # Secrets — never commit real API keys / signing secrets
 .env
+android/key.properties
+*.jks
+*.keystore
