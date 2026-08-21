@@ -183,4 +183,26 @@ void main() {
       expect(SecurityService.maxPerceptualHammingDistance, 10);
     });
   });
+
+  group('hash serialisation', () {
+    final SecurityService svc = SecurityService();
+
+    test('a top-bit digest is unsigned and 16 chars', () {
+      // 0x8000000000000000 vs 0x0 differ by exactly one bit. The pre-fix code
+      // serialised the former as "-8000000000000000" and reported distance 0,
+      // silently missing a tamper.
+      expect(svc.hammingDistance('8000000000000000', '0000000000000000'), 1);
+    });
+
+    test('the legacy signed form still compares correctly', () {
+      // Photos signed before the fix carry the negative spelling. It must
+      // normalise to the same value rather than being treated as unparseable.
+      expect(svc.hammingDistance('-8000000000000000', '8000000000000000'), 0);
+      expect(svc.hammingDistance('-8000000000000000', '0000000000000000'), 1);
+    });
+
+    test('all-bits-different scores 64', () {
+      expect(svc.hammingDistance('ffffffffffffffff', '0000000000000000'), 64);
+    });
+  });
 }

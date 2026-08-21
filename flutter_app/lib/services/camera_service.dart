@@ -23,6 +23,17 @@ class PermissionRequiredException implements Exception {
   String toString() => '$permissionName permission is required';
 }
 
+/// Thrown when the OS reports the fix came from a mock location provider.
+///
+/// Signing a spoofed coordinate would let VeriPic vouch for a lie, so capture
+/// is refused outright rather than recording the fix with a caveat.
+class MockLocationException implements Exception {
+  const MockLocationException();
+
+  @override
+  String toString() => 'Location is being faked by another app';
+}
+
 class CaptureResult {
   CaptureResult({
     required this.bytes,
@@ -152,9 +163,14 @@ class CameraService {
     if (!enabled) {
       throw StateError('Location services are disabled');
     }
-    return Geolocator.getCurrentPosition(
+    final Position position = await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.best,
     );
+
+    // Android reports when a fix came from a mock provider. Refuse to sign it.
+    if (position.isMocked) throw const MockLocationException();
+
+    return position;
   }
 
   Future<void> _ensurePermissions() async {

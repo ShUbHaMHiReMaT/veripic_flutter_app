@@ -1,0 +1,1425 @@
+===============================================================================
+VERIPIC - COMPLETE PROJECT DOCUMENTATION
+Tamper-evident, geo-tagged photo capture and verification
+===============================================================================
+
+Document generated: 21 August 2026
+Repository:         D:\veripic_flutter_app
+Application root:   D:\veripic_flutter_app\flutter_app
+Package name:       com.example.veripic
+Version:            1.0.0+1
+Author / owner:     ShUbHaMHiReMaT (shreyashalingali@gmail.com)
+
+
+===============================================================================
+TABLE OF CONTENTS
+===============================================================================
+
+  1.  WHAT VERIPIC IS
+  2.  THE PROBLEM IT SOLVES
+  3.  WHO IT IS FOR
+  4.  WHAT IT DOES - FEATURE BY FEATURE
+  5.  HOW IT WORKS - THE CAPTURE PIPELINE
+  6.  HOW IT WORKS - THE VERIFICATION PIPELINE
+  7.  CRYPTOGRAPHIC DESIGN
+  8.  PERCEPTUAL HASHING AND TAMPER DETECTION
+  9.  DEVICE IDENTITY
+  10. THE SIGNED ENVELOPE FORMAT
+  11. AI / DEEPFAKE SCREENING
+  12. APPLICATION ARCHITECTURE
+  13. FILE-BY-FILE REFERENCE
+  14. SCREENS AND USER FLOWS
+  15. DESIGN SYSTEM
+  16. THEMING (LIGHT AND DARK)
+  17. DEPENDENCIES
+  18. PLATFORM CONFIGURATION AND PERMISSIONS
+  19. BUILDING AND RUNNING
+  20. TESTING
+  20a. DISTRIBUTION AND HOSTING
+  21. SECURITY POSTURE - WHAT IT PROVES AND WHAT IT DOES NOT
+  22. KNOWN ISSUES AND LIMITATIONS
+  23. OUTSTANDING WORK / ROADMAP
+  24. PROJECT HISTORY
+  25. GLOSSARY
+
+
+===============================================================================
+1. WHAT VERIPIC IS
+===============================================================================
+
+VeriPic is an Android application, written in Flutter/Dart, that captures
+photographs in a way that makes later tampering detectable.
+
+When you take a photo with VeriPic, three things happen that an ordinary camera
+does not do:
+
+  1. The GPS coordinates, altitude, a reverse-geocoded place name, and a UTC
+     timestamp are permanently burned into the image pixels as a visible banner.
+
+  2. A cryptographic signature is computed over that data plus a perceptual
+     fingerprint of the banner, and embedded into the image file in three
+     separate places.
+
+  3. The signing key is derived from the physical device's hardware identifier,
+     so a signature can only be produced by that one device.
+
+A second mode of the app takes any image and checks it: it recovers the embedded
+payload, validates the signature, re-computes the perceptual fingerprint and
+compares it to the recorded one, and optionally screens the image for AI
+generation. The result is a verdict - authentic, edited, mismatched, or unsigned.
+
+In one sentence: VeriPic is a camera that produces photographs which can prove
+where and when they were taken, and which reveal it if anyone edits them
+afterwards.
+
+
+===============================================================================
+2. THE PROBLEM IT SOLVES
+===============================================================================
+
+A photograph on its own is no longer evidence of anything. Three separate forces
+have eroded its trustworthiness:
+
+  * EXIF metadata is trivially editable. Any free tool can rewrite the GPS
+    coordinates and timestamp of a JPEG in seconds, and nothing in the file
+    records that it happened.
+
+  * Screenshot-and-crop, clone-stamping, and text editing can change what a
+    photo appears to show. A photo of a meter reading, a delivery, or a site
+    condition can have its numbers or its stamp altered.
+
+  * Generative AI can now produce photorealistic images of events that never
+    occurred, at zero cost.
+
+The consequence is that "send a photo as proof" no longer works for insurance
+claims, field inspections, compliance records, or delivery confirmation.
+
+VeriPic addresses this by binding the claim (where, when, which device) to the
+pixels (a perceptual fingerprint of the visible stamp) using a key that never
+leaves the device that took the photo. Editing either the claim or the stamp
+breaks the binding, and the verifier can tell which one broke.
+
+
+===============================================================================
+3. WHO IT IS FOR
+===============================================================================
+
+The design direction in CLAUDE.md describes the app as "an instrument, not a
+social camera" and specifies that it must be legible in sunlight and usable with
+gloves. That points squarely at fieldwork. The intended users are:
+
+  * Field inspectors and surveyors - documenting site conditions where the
+    location and time of a photo is the whole point of taking it.
+
+  * Insurance loss adjusters - recording damage in a way that resists later
+    dispute about when or where the photo was taken.
+
+  * Compliance and audit staff - producing records that must survive scrutiny.
+
+  * Logistics and delivery - proof-of-delivery photographs tied to a place and
+    a moment.
+
+  * Journalists and researchers - establishing provenance of source imagery.
+
+Secondary audience: anyone verifying a photo they received. The verification
+flow does not require you to be the person who captured it - though there is an
+important limitation on cross-device verification, covered in section 21.
+
+
+===============================================================================
+4. WHAT IT DOES - FEATURE BY FEATURE
+===============================================================================
+
+CAPTURE
+  - Live camera preview with tap-to-focus and exposure point.
+  - Torch toggle.
+  - Front/rear camera switching.
+  - Continuous GPS position stream with accuracy reporting.
+  - Live status readout showing fix quality, e.g. "FIX +/-4M". Turns alert
+    coloured and reads "WEAK" past 15 m accuracy, or "STALE" if the fix is more
+    than 30 seconds old.
+  - Live stamp preview card showing exactly what will be burned into the next
+    frame: site name, coordinates, altitude, and time.
+  - Reverse geocoding of coordinates into a human place name, re-resolved only
+    after the operator moves more than 50 m.
+  - The shutter refuses to fire without a usable GPS fix, and states the reason
+    inline rather than failing silently or throwing.
+  - MOCK LOCATION BLOCKING. If the operating system reports the fix came from a
+    mock provider (a fake-GPS app), the status readout reads "FIX FAKED -
+    BLOCKED" and capture is refused. Signing a spoofed coordinate would make
+    VeriPic vouch for a lie, so the frame is never produced.
+  - Captured frames are written to disk and exported to a "VeriPic" album in the
+    device gallery.
+
+FRAMES GALLERY
+  - Scrollable, pull-to-refresh grid of frames captured by this app, newest
+    first.
+  - Shows only VeriPic's own output - never the device camera roll.
+  - Tapping a frame opens it full size with pinch-zoom, alongside the signed
+    payload that was sealed into it.
+
+LOCATIONS
+  - Every capture plotted as a square pin over a survey grid, with the newest
+    highlighted.
+  - Coordinates are read from the signed envelope inside each frame, so a pin
+    cannot exist without a valid signed capture behind it.
+  - Tappable list of all pinned captures below the plot.
+  - Works entirely offline (see section 22 - this is a coordinate plot, not a
+    street map).
+
+VERIFICATION
+  - Pick any image from the gallery, or take one with the system camera.
+  - Four-stage animated diagnostic run (see section 6).
+  - Verdict card with a confidence percentage.
+  - Stamp drift gauge showing the Hamming distance against the tolerance.
+  - AI screening result.
+  - Scene integrity grid showing every tile of the photographic content, green
+    where it matches the signed original and alert-coloured where it does not,
+    so an edit is located rather than merely reported.
+  - Expandable drawer of all embedded metadata with tap-to-copy on every field.
+  - One-tap export of a draft evidence certificate as a PDF (see below).
+
+EVIDENCE CERTIFICATE EXPORT
+  - Generates a PDF laid out to follow the certificate structure required by
+    section 63(4) of the Bharatiya Sakshya Adhiniyam, 2023 for electronic
+    records.
+  - Pre-fills the technical particulars the app can attest to: the record, the
+    device, the manner of production, and the verification result, plus the
+    frame itself.
+  - Prompts for the declarant's name, designation, address, and a case
+    reference; any left blank prints a ruled line to complete by hand.
+  - Leaves both signature blocks (Part A, person in control of the device; Part
+    B, person of expert capacity) deliberately blank.
+  - Includes an explicit "limits of this certificate" paragraph.
+  - IMPORTANT: unsigned, the document has no legal effect, and neither the app
+    nor its author provides legal advice or warrants admissibility. See
+    section 21.
+
+DEVICE AND KEY DIAGNOSTICS
+  - Hardware fingerprint and active signing key id shown on the home screen.
+  - Full attribute set (manufacturer, model, board, hardware, build
+    fingerprint, OS version) behind a disclosure.
+  - Warns explicitly when the key is bound to a stored fallback rather than a
+    real hardware identifier.
+
+APPEARANCE
+  - Light and dark themes, plus a "follow the device" mode.
+  - Choice persists across launches.
+
+
+===============================================================================
+5. HOW IT WORKS - THE CAPTURE PIPELINE
+===============================================================================
+
+Implemented in lib/services/camera_service.dart, method capture().
+
+  STEP 1 - PARALLEL ACQUISITION
+    Three operations start concurrently to keep shutter lag down:
+      - c.takePicture()          - the raw frame from the sensor
+      - _readPosition()          - a best-accuracy GPS fix
+      - _deviceService.getDeviceId() - the public device hash
+
+    _readPosition() first checks Geolocator.isLocationServiceEnabled() and
+    throws if the radio is off, so a capture can never silently produce a frame
+    with no location.
+
+  STEP 2 - BURN THE STAMP  (lib/services/overlay_service.dart)
+    applyGpsStamp() decodes the raw JPEG and modifies the pixels:
+
+      a. A global anti-AI micro-watermark grid is applied across the whole
+         image - a +/-3 luminance modulation on a 12 px lattice. Invisible to
+         the eye, but it perturbs the statistical regularity that generative
+         models rely on when regenerating an image.
+
+      b. A stamp panel is filled across the bottom 18% of the frame, in cream
+         at 92% opacity. A panel rather than a drop shadow, because text with
+         only a shadow fails both on bright sky and on dark interiors.
+
+      c. A left accent bar is drawn, its width scaled to the image width so it
+         stays visible at full resolution.
+
+      d. A dense dual-tone anti-AI pattern is drawn at full amplitude, confined
+         to a strip below the text so it never fights legibility.
+
+      e. Three text lines are drawn: place name, coordinates, and timestamp.
+         Font size is derived as a percentage of image height (target 2.2%),
+         never a fixed pixel size, so the stamp scales with the frame.
+
+    The banner region matters: it is the region the perceptual hash is computed
+    over. This is what makes edits to the stamp text detectable.
+
+  STEP 3 - SIGN AND EMBED  (lib/services/security_service.dart)
+    signAndEmbed() operates on the stamped image:
+
+      a. Compute the perceptual hash (dHash) of the banner region.
+      b. Resolve the active hardware-derived signing key.
+      c. Build the envelope: lat, lon, alt, timestamp, device id, pixel hash,
+         key id, schema version.
+      d. Compute HMAC-SHA256 over the canonical serialisation of that envelope.
+      e. Embed the resulting JSON in THREE places:
+           - EXIF UserComment
+           - a standards-compliant JPEG COM segment (0xFFFE) after SOI
+           - an EOF payload appended after the end of the JPEG data
+         Triple embedding is deliberate: different tools strip different
+         things, and the EOF copy survives EXIF stripping entirely.
+
+  STEP 4 - PERSIST
+    The final bytes are written to a file named veripic_<millis>.png in the
+    temporary directory, then exported to the device gallery under the album
+    "VeriPic" via the gal package.
+
+IMPORTANT INVARIANT: the bytes returned by capture() are final. They have
+already been stamped, signed, and embedded. Re-signing them would append a
+second payload and corrupt verification. This is noted at the call site.
+
+
+===============================================================================
+6. HOW IT WORKS - THE VERIFICATION PIPELINE
+===============================================================================
+
+Implemented in lib/services/verification_service.dart, method verify().
+It reports progress through a callback so the UI can animate the checklist.
+
+  STAGE 1 - EXTRACT THE PAYLOAD
+    extractEnvelope() attempts recovery in order of robustness:
+      1. The EOF payload (most robust, and the only copy older builds produced
+         reliably).
+      2. A raw byte scan for the COM/EXIF marker - a single scan finds either,
+         since both are plain bytes in the file.
+      3. Decoder-assisted fallback via PNG text chunks and parsed EXIF.
+
+    Because the COM and EXIF copies are found by scanning raw bytes, there is no
+    delimiter marking where the JSON ends. A brace-balanced JSON extractor
+    handles this, correctly skipping braces inside string literals and escapes.
+
+    If nothing is found: verdict NOT SIGNED. Remaining stages are skipped, but
+    AI screening still runs, so an unsigned image still gets an opinion.
+
+  STAGE 2 - VALIDATE THE HMAC
+    verifySignatureDetailed() checks the signature against the device key ring:
+      1. The key named by the envelope's kid field (fast path for v4).
+      2. The active hardware-derived key.
+      3. Every remaining key in the ring, including the imported legacy secret.
+
+    Comparison is constant-time to avoid leaking information through timing.
+
+    If no key reproduces the signature: verdict TAMPERED METADATA. The report
+    distinguishes "signed by a key this device does not hold" from "no key
+    reproduces this signature", which are different situations.
+
+  STAGE 3 - PERCEPTUAL COMPARISON
+    Re-compute the banner dHash from the supplied image and compare it to the
+    hash recorded in the envelope, by Hamming distance.
+
+      distance <= 10  -> the banner is intact (JPEG recompression tolerated)
+      distance >  10  -> verdict TAMPERED PIXELS
+
+    The threshold of 10 bits out of 64 is the documented tolerance and is
+    covered by a test.
+
+  STAGE 4 - PHOTOGRAPHIC SCENE
+    Re-compute the tiled scene hash and compare it tile-by-tile against the
+    tiles recorded in the envelope.
+
+      every tile within tolerance -> the picture is unaltered
+      any tile over tolerance     -> verdict TAMPERED SCENE, reporting how many
+                                     tiles moved and which ones
+
+    Envelopes at v4 or earlier carry no scene tiles. This stage then reports
+    "skipped - predates scene protection" rather than implying the scene passed,
+    and the authentic verdict says so in words too.
+
+  STAGE 5 - AI SCREENING
+    The image is sent to an NVIDIA-hosted vision model for a synthetic-content
+    opinion. This stage degrades gracefully: a missing API key, an unreachable
+    endpoint, or an unparseable response marks the stage "skipped" rather than
+    failing the verification.
+
+  CONFIDENCE SCORE
+    A 0..1 figure blending the three signals:
+      - notSigned / error        -> 0.0
+      - tamperedMetadata         -> 0.05
+      - tamperedScene            -> degrades with the share of tiles altered,
+                                    capped 0.35
+      - tamperedPixels           -> degrades with Hamming distance, capped 0.4
+      - authentic                -> perceptual closeness, reduced by the
+                                    synthetic-likelihood score when available
+
+
+===============================================================================
+7. CRYPTOGRAPHIC DESIGN
+===============================================================================
+
+PRIMITIVE:      HMAC-SHA256
+KEY DERIVATION: HKDF-SHA256 (RFC 5869), implemented from scratch over
+                package:crypto - extract-then-expand, no native dependency.
+
+KEY DERIVATION PARAMETERS
+    Key = HKDF-SHA256(
+        IKM  = <hardware device seed>,
+        Salt = "VeriPic-Device-Salt-2026",
+        Info = "HMAC-Image-Signing",
+        L    = 32 bytes
+    )
+
+The derived key is cached in FlutterSecureStorage, which is backed by the
+Android Keystore. Because derivation is deterministic, the key can always be
+regenerated from the hardware seed even if secure storage fails.
+
+THE KEY RING
+Rather than a single key, the device holds a ring. This exists so that rotating
+the hardware-derived key - after a factory reset, a device swap, or migration
+off the old scheme - never orphans photos that were already signed.
+Verification walks the entire ring.
+
+Each key carries:
+    kid         first 16 hex chars of SHA-256 over the key material
+    material    raw HMAC key bytes
+    origin      hardwareDerived | legacyRandom
+    createdAt   epoch millis
+
+BACKWARD COMPATIBILITY
+Envelopes signed before the HKDF migration used a per-install random secret
+(v3). That secret is imported into the ring once, marked verify-only, and never
+used for new signatures. Old photos therefore remain verifiable forever.
+
+Note the subtlety handled in _readLegacyKey(): v3 signed with
+Hmac(sha256, utf8.encode(secret)), so the legacy key material is the UTF-8 bytes
+of the stored string, not its base64 decoding. Reproducing this exactly is what
+makes old signatures still validate.
+
+DOWNGRADE RESISTANCE
+The canonical string bound by the HMAC differs by version:
+
+    v3 and earlier:  "v1|lat|lon|alt|ts|device|pixelhash"
+    v4:              "v4|lat|lon|alt|ts|device|pixelhash|kid"
+    v5:              "v5|lat|lon|alt|ts|device|pixelhash|tile,tile,...|kid"
+
+Because v4 binds the key id into the canonical form, an attacker cannot strip
+the kid field to force the verifier down the legacy path - removing it changes
+the canonical string and therefore invalidates the signature. There is a
+dedicated test for this: "stripping the key id does not downgrade to a
+forgeable canonical form".
+
+
+===============================================================================
+8. PERCEPTUAL HASHING AND TAMPER DETECTION
+===============================================================================
+
+ALGORITHM: Difference hash (dHash), 64-bit, computed over the banner region.
+
+    1. Crop the bottom 18% of the image - the stamp banner.
+    2. Resize that crop to 9x8 pixels using average interpolation.
+    3. For each of the 8 rows, compare each pixel's luminance to its right
+       neighbour, producing 8 bits per row = 64 bits total.
+       Luminance uses the standard ITU-R weighting:
+           Y = 0.299*R + 0.587*G + 0.114*B
+    4. Serialise as 16 hex characters.
+
+WHY dHASH AND WHY THE BANNER ONLY
+
+A cryptographic hash of the whole file would be useless here: re-saving a JPEG
+at a different quality changes every byte, and legitimate photos get recompressed
+constantly by messaging apps and email clients.
+
+dHash records the *direction of brightness gradients* rather than absolute
+values. Recompression barely perturbs gradient direction, so the hash is stable
+across quality changes - but moving, editing, or overwriting text in the banner
+changes many gradients at once and flips many bits.
+
+TILED SCENE HASHING (v5 onward)
+
+The banner hash alone left the photographic content unprotected. From envelope
+schema v5 the scene above the banner is ALSO fingerprinted, as a 4x4 grid of
+independent 64-bit dHashes - sixteen tiles, row-major.
+
+Why a grid rather than one hash of the whole scene: a single 64-bit digest
+averaged over an entire frame is far too coarse to catch a localised edit.
+Cloning out one object barely moves it. Hashing each tile separately keeps the
+edit confined to the tiles it actually touched, where it is unmistakable - and
+it lets the UI show you *where* the frame changed, not merely that it did.
+
+    Grid:       4 x 4 = 16 tiles over the top 82% of the frame
+    Per tile:   64-bit dHash, 16 hex chars
+    Tolerance:  10 bits per tile
+    Verdict:    any tile over tolerance -> tamperedScene
+
+All sixteen tile hashes are bound into the HMAC canonical string, so they cannot
+be stripped to escape the check - removing them changes the canonical form and
+invalidates the signature. There is a test for this.
+
+Remaining limitation: an edit smaller than a tile may not move that tile's hash
+past the tolerance. The scheme detects substantial edits reliably and very small
+ones unreliably.
+
+SERIALISATION NOTE (bug fixed 22 August 2026)
+
+Digests are serialised as UNSIGNED 64-bit hex, built from two 32-bit halves.
+
+An earlier implementation used `dHash.toRadixString(16).padLeft(16,'0')`. Since
+`1 << 63` sets Dart's sign bit, any digest whose top bit was set serialised as
+"-8000000000000000" - seventeen characters, and negative. Fed into the distance
+comparison, the loop `while (xorVal > BigInt.zero)` terminated immediately and
+returned distance 0, so two genuinely different hashes compared as IDENTICAL.
+That was a silent false "no tampering detected" affecting roughly half of all
+comparisons. The comparison now runs a fixed 64 iterations and normalises the
+historical signed spelling, so photos signed before the fix still compare
+correctly.
+
+COMPARISON: Hamming distance over the 64-bit values.
+TOLERANCE:  10 bits. Above this, the verdict is tamperedPixels.
+
+Edge cases are handled defensively: empty inputs, differing lengths, and
+unparseable hex all return 64 (maximally distant) rather than throwing or
+falsely matching.
+
+ANTI-AI MICRO-PATTERNING
+Two layers, both applied during capture:
+    - A global +/-3 luminance grid on a 12 px lattice across the entire image.
+    - A dense dual-tone pattern at full amplitude in a strip within the banner.
+These disrupt the statistical smoothness that generative models produce, making
+a regenerated or inpainted version of the image statistically distinguishable
+from an authentic capture.
+
+
+===============================================================================
+9. DEVICE IDENTITY
+===============================================================================
+
+Implemented in lib/services/device_service.dart.
+
+The fingerprint is split into three deliberately separate tiers:
+
+    seed        Secret hardware key material. Never leaves the device, never
+                appears in an envelope, never shown in the UI. Used only as
+                HKDF input keying material.
+
+    publicId    A domain-separated SHA-256 of the seed, using the prefix
+                "VeriPic-PublicDeviceID-v1". This is what gets embedded in every
+                signed photo. Because it is derived through a distinct domain
+                separator, publishing it does not reveal the HKDF input.
+
+    attributes  Human-readable diagnostics for the UI. Includes volatile values
+                that are intentionally EXCLUDED from key material.
+
+WHY NOT IMEI
+Reading the real IMEI is not viable for a normal app. Since Android 10 (API 29),
+TelephonyManager.getImei() requires READ_PRIVILEGED_PHONE_STATE, which ordinary
+Play Store apps cannot hold - it throws SecurityException rather than returning
+a value. iOS never exposes IMEI to third-party apps at all. VeriPic therefore
+uses the strongest legally accessible hardware-bound identifier per platform:
+
+    Android:  Settings.Secure.ANDROID_ID  (stable for the install lifetime,
+              survives reinstall, tied to device + signing key, no permission)
+    iOS:      identifierForVendor         (Apple's sanctioned stable per-vendor
+                                           device id, no permission)
+
+WHY build.fingerprint IS NOT IN THE KEY MATERIAL
+Build.FINGERPRINT changes on every OTA system update. Binding the signing key to
+it would silently rotate the key after any system update and invalidate every
+previously signed photo on that device. The seed therefore uses only OTA-stable
+hardware attributes - brand, model, device, board, hardware, manufacturer on
+Android; model, machine, sysname on iOS - and these are sorted before joining so
+the seed is order-independent and reproducible. The build fingerprint is
+retained purely as a display-level diagnostic.
+
+FALLBACK
+If no OS identifier is available (unsupported platform, emulator quirk), a
+one-time random id is generated and persisted in the Keystore/Keychain so the
+app still behaves deterministically. This case is flagged prominently in the UI,
+because frames signed under a fallback key stay valid only on that install.
+
+CACHING
+The fingerprint is process-cached, and concurrent callers share a single
+in-flight resolution, so a capture burst never hits the platform channels twice.
+
+
+===============================================================================
+10. THE SIGNED ENVELOPE FORMAT
+===============================================================================
+
+The payload is compact JSON, prefixed by a marker so it can be located by a raw
+byte scan.
+
+    MARKERS
+        COM / EXIF copy:  VPIC_METADATA:
+        EOF copy:         VPIC_PAYLOAD:
+
+    FIELDS
+        lat    double   latitude, decimal degrees
+        lon    double   longitude, decimal degrees
+        alt    double   altitude, metres
+        ts     int      capture time, epoch milliseconds UTC
+        dev    string   public device hash
+        ph     string   banner dHash, 16 unsigned hex chars
+        st     array    16 scene tile dHashes (absent in v4 and earlier)
+        sig    string   HMAC-SHA256, hex
+        kid    string   signing key id (absent in v3 and earlier)
+        v      int      schema version (currently 5)
+
+    EXAMPLE
+        VPIC_PAYLOAD:{"lat":15.8497,"lon":74.4977,"alt":610.2,
+        "ts":1755772800000,"dev":"a3f9...","ph":"9c3e1f70a2b4d8e6",
+        "sig":"7b2a...","kid":"3d9f1a8c2e4b6079","v":4}
+
+PARSING TOLERANCE
+    - A missing "v" is treated as version 3.
+    - Coordinates arriving as integers rather than doubles are coerced.
+    - Missing string fields default to empty rather than throwing.
+This tolerance is what lets the current build read envelopes written by every
+historical version of the app.
+
+
+===============================================================================
+11. AI / DEEPFAKE SCREENING
+===============================================================================
+
+Implemented in lib/services/nvidia_vision_service.dart.
+
+    ENDPOINT: https://integrate.api.nvidia.com/v1/chat/completions
+              (the OpenAI-compatible surface most NVIDIA-hosted vision models
+              expose)
+    MODEL:    configured via NVIDIA_MODEL_NAME, default nvidia/neva-22b
+    AUTH:     Bearer token from NVIDIA_API_KEY in .env
+
+The service returns an NvidiaAnalysis carrying:
+    reachable       whether the endpoint answered
+    syntheticScore  0..1, higher = more likely AI-generated
+    summary         the model's prose commentary
+    error           why the check could not run, if it could not
+    rawResponse     the unparsed body, for debugging
+
+DESIGN NOTE: this stage is explicitly advisory and non-blocking. If the key is
+absent, still a placeholder, or the network is down, verification completes
+normally with the AI stage marked "skipped". The cryptographic verdict never
+depends on a third-party service being reachable - which matters for field use
+with no signal.
+
+
+===============================================================================
+12. APPLICATION ARCHITECTURE
+===============================================================================
+
+Three layers, with a deliberately enforced boundary between them.
+
+    lib/main.dart          Entry point. Loads .env, enumerates cameras, loads
+                           the persisted theme choice, starts the app.
+
+    lib/screens/           Presentation only. Widgets, layout, state of the
+                           view. 7 files.
+
+    lib/services/          All I/O and domain logic: camera, GPS, crypto,
+                           device identity, image compositing, network,
+                           storage. 6 files.
+
+    lib/theme/             Design tokens, palettes, and shared UI primitives.
+                           3 files.
+
+    test/                  Unit tests. 2 files, 19 tests.
+
+Total: 18 Dart files, roughly 5,264 lines in lib/.
+
+STATE MANAGEMENT
+Deliberately minimal - plain StatefulWidget with setState, plus one
+ValueNotifier for the theme. No Provider, Riverpod, BLoC, or GetX. For an app of
+this size the ceremony of a state management package would exceed its benefit.
+
+THE PRESENTATION BOUNDARY
+During the UI work a hard rule was established: presentation changes must not
+touch services, data models, permission logic, GPS acquisition, camera capture,
+EXIF writing, the stamp compositing pipeline, navigation route names, or tests.
+This is why several known improvements are listed as outstanding rather than
+done - they require crossing that line and need explicit sign-off.
+
+Known coupling that violates clean layering, documented but not yet extracted:
+    - camera_screen.dart subscribes to Geolocator directly and performs reverse
+      geocoding in the widget.
+    - GPS quality policy (15 m weak, 30 s stale) lives in the presentation layer.
+    - home_screen.dart instantiates DeviceService and SecurityService directly.
+    - verify_screen.dart reads files and drives VerificationService from the
+      widget.
+
+
+===============================================================================
+13. FILE-BY-FILE REFERENCE
+===============================================================================
+
+--- ENTRY POINT ---
+
+lib/main.dart
+    Initialises the Flutter binding, loads .env (optional - services fall back
+    to safe defaults), enumerates available cameras, loads the persisted theme
+    mode, and runs the app. Wraps MaterialApp in a ValueListenableBuilder so a
+    theme change is a rebuild rather than a restart.
+
+--- SERVICES ---
+
+lib/services/camera_service.dart
+    Owns the CameraController. initialize() requests camera and location
+    permissions and throws a PermissionRequiredException carrying enough context
+    for the UI to show a helpful prompt. capture() runs the full pipeline of
+    section 5. Also provides focusAt() and setFlashMode(), both of which fail
+    silently on sensors that do not support them so the UI stays responsive.
+
+lib/services/device_service.dart
+    Produces the DeviceFingerprint - seed, publicId, label, attributes, and the
+    usedFallback flag. Process-cached with shared in-flight resolution.
+    Fully documented in section 9.
+
+lib/services/security_service.dart
+    The cryptographic core, and the largest service (~731 lines). Contains:
+      - hkdfSha256()             RFC 5869 implementation
+      - activeKey() / keyRing()  key management and persistence
+      - signAndEmbed()           signing and triple embedding
+      - extractEnvelope()        multi-strategy payload recovery
+      - computeBannerDHash()     perceptual hashing
+      - hammingDistance()        bit-difference comparison
+      - verifySignatureDetailed() ring-walking verification
+      - _canonical()             version-aware canonical serialisation
+      - _constantTimeEq()        timing-safe comparison
+
+lib/services/overlay_service.dart
+    Burns the visible stamp into the pixels, and applies both anti-AI pattern
+    layers. Also performs reverse geocoding for the stamp text, with a fallback
+    string if the geocoder is unavailable.
+
+lib/services/verification_service.dart
+    Orchestrates the four-stage verification, emits progress for the UI, and
+    computes the blended confidence score. Defines VerifyStage, StageState, and
+    VerificationReport.
+
+lib/services/nvidia_vision_service.dart
+    HTTP client for the AI screening endpoint. Fully described in section 11.
+
+lib/services/certificate_service.dart
+    Renders the section 63(4) evidence certificate as a PDF. Collects the
+    technical particulars from the report, the envelope, and the device
+    fingerprint; leaves both statutory signature blocks blank; and prints an
+    explicit limitations paragraph that adapts to whether the frame carried
+    scene protection.
+
+lib/services/frame_store.dart
+    Read-only index of frames this app has written. Enumerates files matching
+    veripic_<millis>.png, parses the capture time from the filename, and returns
+    them newest-first. Deliberately scoped to VeriPic's own output - it never
+    reads the device camera roll. Does not change the capture pipeline; it only
+    reads what that pipeline has already produced.
+
+--- SCREENS ---
+
+lib/screens/app_shell.dart
+    Bottom-tab shell hosting Home, Frames, and Locations in an IndexedStack, so
+    tab state survives switching. Owns the app bar and the theme toggle.
+
+lib/screens/home_screen.dart
+    Display headline, primary "Open viewfinder" action, a two-card tool grid,
+    and the device identity card with its expandable diagnostics.
+
+lib/screens/camera_screen.dart
+    The viewfinder. The largest screen. Manages camera lifecycle, the GPS
+    stream, the clock, reverse geocoding, focus, torch, camera switching, fix
+    quality assessment, and capture. Handles five distinct states: initialising,
+    permission required, location switched off, fatal error, and live.
+
+lib/screens/frames_screen.dart
+    Scrollable grid of captured frames with pull-to-refresh, and empty/loading/
+    error states.
+
+lib/screens/frame_detail_screen.dart
+    One frame full size with pinch-zoom, plus the sealed payload read back out
+    of the file itself.
+
+lib/screens/locations_screen.dart
+    Coordinate plot of all captures plus a tappable list. Includes a custom
+    painter that computes a square equirectangular projection over the bounds of
+    the pins, with a minimum span so a single pin does not divide by zero.
+
+lib/screens/verify_screen.dart
+    The verification report. Source picker, animated four-check list, verdict
+    card, drift gauge, AI card, and metadata drawer. Progress updates are queued
+    and drained on a fixed cadence so the checklist stays readable - the
+    pipeline resolves the first two checks in single-digit milliseconds, far too
+    fast to follow otherwise.
+
+--- THEME ---
+
+lib/theme/tokens.dart
+    The token layer. The only place in the codebase where a raw colour, size,
+    font name, radius, shadow, or duration is allowed to appear. Also defines
+    the Palette ThemeExtension and builds both ThemeData objects.
+
+lib/theme/veripic_theme.dart
+    Shared UI primitives, each consuming tokens only, each defining its pressed,
+    disabled, and focused states at build time. Re-exports tokens.dart so screens
+    need a single import.
+
+lib/theme/theme_controller.dart
+    ValueNotifier<ThemeMode> that cycles system -> light -> dark and persists the
+    choice.
+
+
+===============================================================================
+14. SCREENS AND USER FLOWS
+===============================================================================
+
+FLOW A - CAPTURE A SIGNED FRAME
+    Home -> "Open viewfinder"
+      -> permissions requested if not already granted
+      -> if the location radio is off: a dedicated screen with "Open location
+         settings"; returning with it enabled starts the viewfinder
+         automatically
+      -> wait for a usable GPS fix (status readout goes from alert to ok)
+      -> optionally tap to focus, toggle torch, switch camera
+      -> press the shutter
+      -> stamp burned, signature computed, payload embedded, file written,
+         gallery export
+      -> confirmation, and the frames thumbnail updates
+
+FLOW B - REVIEW CAPTURED FRAMES
+    Frames tab -> scrollable grid, newest first
+      -> tap a frame -> full size, pinch to zoom, sealed payload listed
+    Or: viewfinder -> tap the thumbnail in the control row
+
+FLOW C - SEE WHERE FRAMES WERE TAKEN
+    Locations tab -> pin plot plus list
+      -> tap any entry -> that frame's detail
+
+FLOW D - VERIFY A FRAME
+    Home -> "Check a frame"
+      -> choose from gallery, or take a photo
+      -> four checks animate in sequence
+      -> verdict, confidence, drift gauge, AI result
+      -> expand the metadata drawer to inspect or copy any field
+
+FLOW E - INSPECT DEVICE IDENTITY
+    Home -> device card -> "Show details"
+      -> full hardware attributes and HKDF parameters
+
+FLOW F - CHANGE APPEARANCE
+    Any tab -> theme button in the app bar -> cycles system / light / dark
+
+
+===============================================================================
+15. DESIGN SYSTEM
+===============================================================================
+
+The design system is specified in flutter_app/CLAUDE.md, which is the source of
+truth - code derives from it, not the other way round.
+
+CURRENT DIRECTION: "Bold paper"
+Flat cream ground, heavy black outlines, hard offset shadows, saturated colour
+used as identity. Every surface reads like a physical card on a desk: outlined,
+slightly raised, unambiguous. Nothing subtle, nothing glassy.
+
+COLOUR
+    canvas          #FCF9F0   app background
+    surface         #FFFFFF   cards, sheets
+    surface-inset   #F1EDE1   inset wells, disabled fills
+    outline         #000000   every border, divider, shadow
+    text            #000000   primary text
+    text-soft       #6B6B6B   secondary text and metadata
+    accent          #FFD84D   primary action - shutter, confirm
+    accent-press    #E8C22F   pressed accent
+    ok              #5EE9A0   verified, authentic, signature valid
+    alert           #FF7BA0   tampered, denied, degraded GPS
+    warn            #F5E3B0   caution, fallback key, unavailable service
+    info            #A78BFA   category identity
+    cool            #C8E85A   category identity
+    null            #C4C4C4   unsorted, empty
+
+Colour is identity, not decoration - it says which thing this is, or what state
+it is in. ok, alert, and warn are reserved for state and may never be used as
+category identity.
+
+TYPE
+Two bundled faces. Space Grotesk is a variable font; weight rides the wght axis
+rather than a faux-bold.
+
+    Role          Size  Weight  Family    Tracking
+    Display        30    700    Grotesk   -0.02em
+    Screen title   22    700    Grotesk   -0.01em
+    Card title     15    700    Grotesk    0
+    Body           15    400    Grotesk    0
+    Label          12    500    Grotesk    0.02em
+    Data           12    400    Mono       0
+    Data small     10    400    Mono       0.06em, uppercase
+
+THE MONOSPACE RULE
+Every number a user might verify renders in JetBrains Mono: coordinates,
+accuracy, timestamps, hashes, counts, altitude. Prose renders in Space Grotesk.
+The rationale is stated in the spec: a coordinate in a proportional font
+instantly looks untrustworthy. This rule has survived every redesign.
+
+GEOMETRY
+    Radius:   16px cards and sheets, 12px buttons/inputs/icon tiles, full round
+              on badges only. Nothing else.
+    Borders:  2px solid outline everywhere; 3px only on the shutter.
+    Shadow:   4px 4px 0 outline - hard, zero blur, never coloured, never soft.
+              The only depth cue in the system.
+    Press:    pressed elements drop the shadow and translate 2px, 2px, so the
+              press feels physical.
+    Spacing:  4, 8, 12, 16, 24, 32. Nothing between.
+    Touch:    minimum 48dp. Field users wear gloves.
+
+PRIMITIVES (lib/theme/veripic_theme.dart)
+    PressCard        the foundation - outlined, shadowed, physically pressable,
+                     focus ring, honours reduced motion
+    IconTile         rounded square in an identity colour, black glyph
+    TabCard          folder-tab card: coloured tab overlapping the top border
+    StatusBadge      full-round outlined pill, mono uppercase
+    ActionButton     accent fill, outline, hard shadow
+    IconButtonTile   square outlined icon control
+    SectionHead      plain bold heading
+    FieldCard        non-interactive outlined card
+    AccentPanel      card with a solid accent bar down its left edge
+    DataLine         label plus mono value with tap-to-copy
+    LogRow           bordered row with thumbnail or icon tile
+    EmptyState / LoadingState / ErrorState
+
+ACCESSIBILITY
+    - Minimum 48dp touch targets throughout.
+    - Semantics labels on interactive primitives; header semantics on section
+      heads; live regions on loading and error states.
+    - Visible focus ring on PressCard.
+    - Reduced motion honoured via Tokens.motion(context, duration), which
+      returns Duration.zero when the platform requests it.
+    - No animation exceeds 200ms.
+
+
+===============================================================================
+16. THEMING (LIGHT AND DARK)
+===============================================================================
+
+Implemented as a Palette ThemeExtension, so colours resolve from BuildContext
+rather than being compile-time constants. A theme change is a rebuild, not a
+restart.
+
+                    LIGHT       DARK
+    canvas          #FCF9F0     #15130F
+    surface         #FFFFFF     #23201A
+    surface-inset   #F1EDE1     #2E2A22
+    outline         #000000     #000000
+    text            #000000     #F5F1E6
+    text-soft       #6B6B6B     #A39C8C
+
+TWO DELIBERATE DECISIONS
+
+  1. Dark is NOT an inversion. The outline stays pure black in both themes.
+     Inverting it to white would destroy the ink-on-paper metaphor the whole
+     system rests on - white outlines read as neon, not as printed card.
+
+  2. Identity and state colours do not change between themes, and their glyphs
+     stay black in both. Every one of accent, ok, alert, warn, info, cool and
+     null is a light pigment, so black is the only legible ink on them. The
+     token Tokens.onIdentity exists precisely for this - using textPrimary would
+     put cream text on a yellow shutter in dark mode.
+
+MODE SELECTION
+Three modes - system, light, dark - cycled from the app bar button and persisted
+in secure storage. System is the default, and light remains the fallback when
+the system expresses no preference, because the app is used outdoors.
+
+
+===============================================================================
+17. DEPENDENCIES
+===============================================================================
+
+    RUNTIME
+    flutter                     SDK
+    cupertino_icons     ^1.0.6
+    camera              ^0.10.6   camera preview and capture
+    geolocator          ^11.0.0   GPS position and service state
+    geocoding            ^3.0.0   reverse geocoding to place names
+    permission_handler  ^11.3.1   runtime permission requests
+    crypto               ^3.0.3   SHA-256 and HMAC
+    pointycastle         ^3.9.1   crypto primitives
+    image                ^4.9.1   decode, composite, encode, EXIF
+    flutter_secure_storage ^9.2.2 Keystore-backed key and setting storage
+    flutter_dotenv       ^5.1.0   .env loading
+    http                 ^1.2.2   NVIDIA endpoint client
+    path_provider        ^2.1.3   temp and documents directories
+    image_picker         ^1.1.2   choosing an image to verify
+    intl                ^0.20.3   date formatting
+    device_info_plus    ^10.1.0   hardware attributes
+    android_id           ^0.5.2   Settings.Secure.ANDROID_ID
+    gal                  ^2.3.3   gallery album export
+    pdf                 ^3.12.0   evidence certificate rendering
+    printing            ^5.14.3   certificate share / print sheet
+    share_plus          ^12.0.2   sharing the exported certificate
+
+    DEV
+    flutter_test                  SDK
+    flutter_lints        ^4.0.0
+
+    ASSETS
+    .env
+    assets/fonts/SpaceGrotesk.ttf        variable, 300-700, OFL
+    assets/fonts/JetBrainsMono-Regular.ttf  OFL
+
+    ENVIRONMENT
+    Dart SDK  >=3.3.0 <4.0.0
+    Flutter   >=3.27.0
+    Verified against Flutter 3.41.0 / Dart 3.11.0
+
+
+===============================================================================
+18. PLATFORM CONFIGURATION AND PERMISSIONS
+===============================================================================
+
+    ANDROID PERMISSIONS (AndroidManifest.xml)
+        android.permission.CAMERA
+        android.permission.ACCESS_FINE_LOCATION
+        android.permission.ACCESS_COARSE_LOCATION
+        android.permission.WRITE_EXTERNAL_STORAGE
+
+    Package / namespace:  com.example.veripic
+    SDK versions inherit the Flutter defaults (compileSdk, minSdk, targetSdk all
+    delegate to the Flutter Gradle plugin).
+
+    GRADLE NOTES (android/gradle.properties) - both settings are load-bearing on
+    this machine and should not be reverted casually:
+
+      org.gradle.jvmargs=-Xmx1536m ...
+        At -Xmx3072m the Gradle daemon dies with a native-allocation OOM on a
+        16 GB Windows box once the Flutter tooling and an IDE are also resident.
+        1536m builds this project comfortably and faster.
+
+      kotlin.incremental=false
+        Windows only. Kotlin's incremental compiler cache cannot compute a
+        relative path when the project and the Gradle/Pub caches live on
+        different drive letters (project on D:, caches on C:), which crashes the
+        build with "Could not close incremental caches ... this and base files
+        have different roots". Disabling incremental compilation avoids the
+        crash at a small cost in build speed, not correctness.
+
+    ENVIRONMENT FILE
+    flutter_app/.env is gitignored and must be created from .env.example:
+
+        NVIDIA_API_KEY=<your key from build.nvidia.com>
+        NVIDIA_MODEL_NAME=nvidia/neva-22b
+
+    There is deliberately no signing secret in .env. Since the HKDF migration the
+    HMAC key is derived per-device from the hardware identifier and cached in the
+    Keystore. Nothing cryptographic lives in .env.
+
+
+===============================================================================
+19. BUILDING AND RUNNING
+===============================================================================
+
+    PREREQUISITES
+      - Flutter 3.27+ (verified on 3.41.0)
+      - Android SDK and a connected device or emulator
+      - A .env file (copy .env.example and fill in your NVIDIA key)
+
+    COMMANDS  (run from D:\veripic_flutter_app\flutter_app)
+
+      flutter pub get                 install dependencies
+      flutter analyze                 static analysis - expect zero issues
+      flutter test                    unit tests - expect 19 passing
+      flutter run                     run on the connected device
+      flutter build apk --debug       debug APK
+      flutter build apk --release     release APK
+
+    TROUBLESHOOTING
+
+      "Out of memory" from the Dart compiler, or
+      "There is not enough space on the disk", or
+      "Gradle build daemon disappeared unexpectedly"
+
+        All three are usually the same root cause: the C: drive is full.
+        With C: full, Windows cannot grow the page file, so native allocations
+        fail; and Gradle cannot write transforms or its temp store.
+        Check with:   Get-PSDrive -PSProvider FileSystem
+        Free space on C:, then rebuild.
+
+      Stale Gradle/Kotlin daemons eating RAM:
+        cd android
+        .\gradlew.bat --stop
+
+      Never run two flutter builds concurrently - it leaves orphaned daemons.
+
+
+===============================================================================
+20. TESTING
+===============================================================================
+
+    26 unit tests across 2 files, all passing.
+
+    test/security_service_test.dart - cryptographic correctness
+      HKDF-SHA256:
+        - matches RFC 5869 Test Case 1
+        - matches Test Case 3 (empty salt and info)
+        - is deterministic for the VeriPic parameters
+        - a different hardware seed yields a different key
+      Signing keys:
+        - key id is a stable 16-hex-char digest of the material
+        - survives a JSON round-trip
+      Hamming distance:
+        - identical hashes score zero
+        - counts differing bits
+        - mismatched or empty inputs are treated as maximally distant
+        - the tamper threshold is the documented 10 bits
+
+    test/envelope_roundtrip_test.dart - end-to-end integrity
+        - signs, embeds and recovers an envelope end to end
+        - embeds a standards-compliant JPEG COM segment
+        - recovers the envelope from the COM copy when the EOF tail is stripped
+        - rejects an envelope whose payload was edited
+        - stripping the key id does not downgrade to a forgeable canonical form
+        - a legacy v3 random-secret signature still verifies
+      Scene protection:
+        - tiles the scene and binds them into the signature
+        - an edit confined to one tile moves only that tile
+        - mismatched tile sets are not comparable
+        - stripping the scene tiles invalidates the signature
+      Hash serialisation:
+        - a top-bit digest is unsigned and 16 chars
+        - the legacy signed form still compares correctly
+        - all-bits-different scores 64
+        - v4 round-trips through JSON
+        - parses a legacy v3 envelope with no key id
+        - tolerates integer-typed coordinates and a missing version
+
+    Validating HKDF against the published RFC 5869 vectors matters: it proves
+    the from-scratch implementation is genuinely RFC-conformant rather than
+    merely self-consistent.
+
+    NOT COVERED
+      - No widget tests. The UI has been verified only by static analysis.
+      - No integration tests of the camera or GPS paths.
+      - Rendering at 320dp width and 200% font scale is unverified.
+
+
+===============================================================================
+20a. DISTRIBUTION AND HOSTING
+===============================================================================
+
+CLOUDFLARE
+
+  DO NOT host the APK on Cloudflare Pages. Pages enforces a 25 MiB limit per
+  static asset, and a Flutter release APK exceeds that comfortably once the
+  engine, both bundled fonts, and the PDF library are included. The upload will
+  be rejected outright.
+
+  Use CLOUDFLARE R2 instead - object storage, with no per-file limit of that
+  kind. Typical arrangement:
+
+    1. Create an R2 bucket for release artefacts.
+    2. Upload the APK (wrangler r2 object put, or the dashboard).
+    3. Expose it either through a custom domain bound to the bucket, or via a
+       Worker that proxies the object.
+    4. Serve with:
+         Content-Type: application/vnd.android.package-archive
+       so that browsers download it rather than trying to render it.
+
+  A reasonable split is to keep the landing page on Pages - it is small, static,
+  and gets Pages' CDN for free - and point its download button at the R2 URL.
+  Pages for the page, R2 for the payload.
+
+  Note that a sideloaded APK gives no update channel: users must download and
+  install each new build by hand, and Android will warn them about installing
+  from an unknown source. That is acceptable for pilot distribution to a known
+  group, and poor for anything wider.
+
+GOOGLE PLAY
+
+  Play does not accept APKs for new applications. You must upload an Android App
+  Bundle:
+
+      flutter build appbundle --release
+
+  Before the first upload:
+
+    * Change the application id. It is currently com.example.veripic, and Play
+      rejects anything in the com.example namespace.
+    * Set up release signing. There is currently no signing configuration in
+      android/app/build.gradle.kts, so release builds are debug-signed and
+      cannot be published.
+    * Enrol in Play App Signing.
+
+  Store listing obligations that this app specifically triggers:
+
+    * A privacy policy is mandatory, because the app accesses location and
+      camera.
+    * The Data safety form must be completed. Answer it accurately: VeriPic
+      collects location and photographs, and - apart from the optional AI
+      screening call - processes them entirely on the device. The photograph is
+      transmitted to NVIDIA only when the user runs a verification with AI
+      screening configured; that must be disclosed.
+    * Location permission justification: the app needs precise location because
+      the coordinate is the substance of the record, not an enhancement to it.
+    * If distributing in India and marketing the section 63(4) export as legal
+      evidence, have the wording reviewed. Claiming court admissibility is a
+      legal claim, and the certificate is a draft requiring signature (see
+      section 21).
+
+  Target API level requirements move every year; check Play's current minimum
+  before each release.
+
+===============================================================================
+21. SECURITY POSTURE - WHAT IT PROVES AND WHAT IT DOES NOT
+===============================================================================
+
+This section matters more than any other. Be precise about the claims.
+
+WHAT VERIPIC PROVES
+
+  * That the metadata (coordinates, altitude, timestamp, device) has not been
+    altered since capture. Any edit breaks the HMAC.
+
+  * That the visible stamp banner has not been edited. Any meaningful change to
+    the stamp text moves the dHash beyond the tolerance.
+
+  * (v5 onward) That the photographic content has not been substantially
+    edited. Sixteen tile fingerprints cover the scene above the banner, and the
+    report identifies which tiles moved.
+
+  * That the position was not reported by a mock location provider, since
+    capture is refused outright in that case.
+
+  * That the photo was signed by a key held by a specific device.
+
+  * That the payload survived transport, thanks to triple embedding.
+
+WHAT VERIPIC DOES NOT PROVE
+
+  * IT DOES NOT DETECT ARBITRARILY SMALL EDITS TO THE PHOTOGRAPH.
+    Scene protection works at tile resolution - one sixteenth of the frame.
+    A substantial edit is caught reliably; an edit small relative to a tile may
+    not move that tile's hash past tolerance. And frames signed at v4 or earlier
+    have no scene coverage at all; the report says so explicitly rather than
+    implying they passed.
+
+  * IT DOES NOT PROVE THE PHOTO SHOWS WHAT THE GPS SAYS.
+    The app records the device's reported location and now refuses to sign a fix
+    the operating system flags as mocked (Position.isMocked). That defeats
+    ordinary fake-GPS apps. It does NOT defeat a device whose operating system
+    or firmware has been modified to report a false position without setting the
+    flag, nor GNSS signal spoofing at the radio level.
+
+  * IT IS NOT A PUBLIC-KEY SYSTEM.
+    HMAC is symmetric. Verification requires possession of the key, which means
+    in practice a photo can only be fully verified on the device that captured
+    it, or on a device holding that key. A third party cannot independently
+    verify a VeriPic photo without the secret. Moving to an asymmetric scheme
+    (Ed25519 sign / public verify) is the single most valuable upgrade
+    available and is listed in the roadmap.
+
+  * IT DOES NOT PROTECT AGAINST A COMPROMISED DEVICE.
+    If an attacker extracts the derived key from the Keystore, they can forge
+    signatures for that device indefinitely. There is no revocation.
+
+  * ANDROID_ID IS NOT UNSPOOFABLE.
+    It is the strongest identifier an ordinary app can reach, but on a rooted
+    device it can be changed.
+
+  * THE EVIDENCE CERTIFICATE IS A DRAFT, NOT A LEGAL INSTRUMENT.
+    The section 63(4) export sets out accurately what the app verified and by
+    what method. It is unsigned by design: the statute requires signature by the
+    person in lawful control of the device and by a person of expert capacity,
+    and neither is the app. Unsigned it has no legal effect. Nothing in this
+    project constitutes legal advice, and no representation is made that any
+    court will admit the record. Have the wording reviewed by a qualified lawyer
+    in the relevant jurisdiction before relying on it.
+
+KEY MANAGEMENT NOTE
+The signing key never leaves the device and is never transmitted. The public
+device hash embedded in photos is domain-separated from the HKDF input, so
+publishing it does not weaken the key.
+
+OUTSTANDING SECURITY ITEM
+A live NVIDIA API key was committed to .env.example in commit f23baa1 and
+remains in the git history. The file has since been sanitised to placeholders,
+but sanitising does not un-leak it. THAT KEY SHOULD BE REVOKED AND REISSUED at
+build.nvidia.com. A vestigial APP_SIGNING_SECRET was also present and has been
+removed - it was unused after the HKDF migration.
+
+
+===============================================================================
+22. KNOWN ISSUES AND LIMITATIONS
+===============================================================================
+
+  1. THE STAMP DOES NOT RENDER IN JETBRAINS MONO.
+     The design system requires the stamp to be composited using the bundled
+     mono font at 2.2% of image height. package:image can only draw its own
+     bitmap fonts - it cannot rasterise a TTF at all. The current code
+     approximates by selecting between arial24 and arial48 based on image
+     height. Doing this properly requires recompositing on a dart:ui Canvas at
+     native resolution, which changes the capture pipeline.
+
+  2. CAPTURED FRAMES LIVE IN THE TEMPORARY DIRECTORY.
+     Android can evict them under storage pressure, which would thin out the
+     Frames gallery and the Locations plot. The permanent copies remain in the
+     device's VeriPic album. Fixing this means moving captures to a documents
+     directory in camera_service.dart.
+
+  3. LOCATIONS IS A COORDINATE PLOT, NOT A STREET MAP.
+     Pins are plotted on a survey grid with no basemap underneath. A real map
+     requires a new dependency - flutter_map (free OSM tiles, no API key, ~1.5MB,
+     needs network) or google_maps_flutter (better maps, needs a Google Cloud
+     API key and billing, ~3MB). The plot does work fully offline.
+
+  4. GPS SPOOFING IS ONLY PARTLY DEFEATED.
+     Mock-provider fixes are now refused, but a modified OS or radio-level GNSS
+     spoofing is still not detected. See section 21.
+
+  5. SCENE PROTECTION WORKS AT TILE RESOLUTION.
+     Substantial edits are caught; edits small relative to one sixteenth of the
+     frame may not be. Frames signed at v4 or earlier have no scene coverage.
+
+  6. NO WIDGET OR INTEGRATION TESTS.
+
+  7. RENDERING AT 320dp AND 200% FONT SCALE IS UNVERIFIED.
+
+  8. iOS IS IMPLEMENTED IN CODE BUT UNTESTED.
+     device_service.dart handles identifierForVendor and iOS attributes, but
+     the app has only ever been built and run for Android.
+
+  9. THE STAMP PANEL COLOUR PREDATES THE CURRENT PALETTE.
+     It uses the older cream value and has not been re-checked against the
+     current "Bold paper" spec.
+
+ 10. NO EXIF GPS TAGS ARE WRITTEN.
+     The spec calls for writing GPS to EXIF as well as burning it into pixels
+     ("the pixels are for humans, EXIF is for everything downstream"). Currently
+     coordinates live only in the signed envelope and the visible banner.
+
+ 11. THE ORIGINAL UNSTAMPED FRAME IS NOT RETAINED.
+     The spec calls for keeping it so a different stamp template could be
+     applied to an old photo later.
+
+
+===============================================================================
+23. OUTSTANDING WORK / ROADMAP
+===============================================================================
+
+    HIGH VALUE
+      - Revoke and reissue the leaked NVIDIA API key.
+      - Move to asymmetric signatures (Ed25519) so third parties can verify
+        without holding a secret. This is the single biggest improvement to the
+        trust model.
+      - Increase scene hash resolution (a finer grid, or per-tile bit depth) so
+        smaller edits are caught.
+
+    MEDIUM
+      - Rewrite stamp compositing on a dart:ui Canvas so JetBrains Mono renders
+        at native resolution.
+      - Move captured frames out of the temp directory.
+      - Write EXIF GPS tags alongside the burned-in stamp.
+      - Retain the original unstamped frame.
+      - Add a real basemap to Locations (needs a dependency decision).
+
+    LOWER
+      - Widget and integration tests.
+      - Verify and polish rendering at 320dp and 200% font scale.
+      - Extract GPS policy and geocoding out of the presentation layer.
+      - Test and finish the iOS path.
+      - Export / share a verification report.
+
+
+===============================================================================
+24. PROJECT HISTORY
+===============================================================================
+
+The project has passed through several distinct phases:
+
+  1. INITIAL BUILD - capture, stamping, HMAC signing with a per-install random
+     secret, dual embedding, and a basic verification screen.
+
+  2. HARDWARE KEY BINDING - the random secret was replaced by an HKDF-SHA256 key
+     derived from the device's hardware identifier, with a key ring added so
+     previously signed photos stayed verifiable. Envelope schema went to v4 with
+     downgrade resistance.
+
+  3. UI DIRECTION ONE - "Cyber forensics": dark OLED background, neon emerald
+     accents, glassmorphism, animated backdrops. Rejected as overdesigned.
+
+  4. UI DIRECTION TWO - light, flat, blue-accented, minimal. An intermediate
+     step, superseded.
+
+  5. UI DIRECTION THREE - "Field kit": warm sand ground, forest green, a single
+     orange signal colour, Space Grotesk and JetBrains Mono, 6px radius,
+     hairline borders. This is when CLAUDE.md was introduced as the design
+     source of truth and when the two fonts were bundled.
+
+  6. UI DIRECTION FOUR - "Bold paper", the current system: cream ground, heavy
+     black outlines, hard offset shadows, saturated identity colours, 16px
+     radii. CLAUDE.md was rewritten to match rather than letting code contradict
+     the spec.
+
+  7. STRUCTURED REFACTOR - a phased overhaul introduced a strict token layer, a
+     primitives layer with pressed/disabled/focused states defined up front, and
+     a hard presentation/services boundary.
+
+  8. NAVIGATION AND THEMING - dark theme via ThemeExtension, bottom-tab
+     navigation, the Frames gallery, the Locations plot, and a fix for the
+     camera permission race.
+
+  9. EVIDENTIARY HARDENING (22 August 2026) - mock-location capture blocking,
+     tiled scene fingerprinting at envelope v5, the section 63(4) certificate
+     export, and a fix to a latent hash-serialisation bug that could report two
+     different digests as identical.
+
+A note on the design churn: three of the four UI directions were discarded.
+The cost of that was reduced substantially by the token layer - because tokens
+are named by role (surface, textPrimary, statusAlert) rather than appearance,
+the entire palette could be swapped without renaming call sites. The one
+exception was borderHairline, which had to become outline when the border went
+from 1px to 2px, because the old name had become a lie.
+
+
+===============================================================================
+25. GLOSSARY
+===============================================================================
+
+    dHash                Difference hash. A perceptual hash recording the
+                         direction of brightness gradients between adjacent
+                         pixels. Survives recompression; breaks on edits.
+
+    Hamming distance     The number of differing bits between two equal-length
+                         values. Here, between two 64-bit dHashes.
+
+    HMAC                 Hash-based Message Authentication Code. Proves both
+                         integrity and authenticity, using a shared secret.
+
+    HKDF                 HMAC-based Key Derivation Function, RFC 5869. Turns
+                         input keying material into one or more strong keys via
+                         an extract step then an expand step.
+
+    IKM                  Input Keying Material - the raw secret fed into HKDF.
+
+    Envelope             The JSON payload embedded in a signed photo, carrying
+                         the claim and its signature.
+
+    kid                  Key id. First 16 hex chars of SHA-256 over the key
+                         material; identifies which key signed an envelope.
+
+    Key ring             The set of keys a device can verify with: the active
+                         hardware-derived key plus retained historical keys.
+
+    COM segment          A JPEG comment segment, marker 0xFFFE. A standard place
+                         to store arbitrary text in a JPEG.
+
+    EOF payload          Data appended after the end of the JPEG stream. Ignored
+                         by decoders, survives EXIF stripping.
+
+    Domain separation    Deriving different values from the same secret using
+                         distinct prefixes, so exposing one does not compromise
+                         another.
+
+    Constant-time compare A comparison whose duration does not depend on where
+                         two values first differ, preventing timing attacks.
+
+    ANDROID_ID           Settings.Secure.ANDROID_ID. A per-device, per-signing-
+                         key identifier, stable across reinstalls.
+
+    ThemeExtension       Flutter mechanism for attaching custom values to a
+                         ThemeData so they resolve from BuildContext.
+
+    Reduced motion       An OS accessibility setting requesting minimal
+                         animation. Honoured via Tokens.motion().
+
+===============================================================================
+END OF DOCUMENT
+===============================================================================

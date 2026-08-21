@@ -109,6 +109,7 @@ class SignedEnvelope {
     required this.deviceId,
     required this.pixelHash,
     required this.signature,
+    this.sceneTiles = const <String>[],
     this.kid,
     this.version = SecurityService.envelopeVersion,
   });
@@ -119,6 +120,12 @@ class SignedEnvelope {
   final int timestampMs;
   final String deviceId;
   final String pixelHash;
+
+  /// Per-tile dHashes covering the photographic scene above the banner.
+  ///
+  /// Empty for v4 and earlier, which protected only the stamp banner.
+  final List<String> sceneTiles;
+
   final String signature;
 
   /// Key identifier. Null for pre-v4 envelopes signed before key ring support.
@@ -128,6 +135,10 @@ class SignedEnvelope {
 
   bool get isHardwareBound => version >= 4 && kid != null;
 
+  /// True when the envelope also protects the photographic content, not just
+  /// the stamp banner.
+  bool get protectsScene => sceneTiles.isNotEmpty;
+
   SignedEnvelope copyWith({String? signature, String? kid, int? version}) =>
       SignedEnvelope(
         lat: lat,
@@ -136,6 +147,7 @@ class SignedEnvelope {
         timestampMs: timestampMs,
         deviceId: deviceId,
         pixelHash: pixelHash,
+        sceneTiles: sceneTiles,
         signature: signature ?? this.signature,
         kid: kid ?? this.kid,
         version: version ?? this.version,
@@ -148,6 +160,7 @@ class SignedEnvelope {
         'ts': timestampMs,
         'dev': deviceId,
         'ph': pixelHash,
+        if (sceneTiles.isNotEmpty) 'st': sceneTiles,
         'sig': signature,
         if (kid != null) 'kid': kid,
         'v': version,
@@ -160,6 +173,11 @@ class SignedEnvelope {
         timestampMs: (json['ts'] as num?)?.toInt() ?? 0,
         deviceId: json['dev'] as String? ?? '',
         pixelHash: json['ph'] as String? ?? '',
+        sceneTiles: <String>[
+          for (final Object? t in (json['st'] as List<dynamic>? ??
+              const <dynamic>[]))
+            if (t is String) t,
+        ],
         signature: json['sig'] as String? ?? '',
         kid: json['kid'] as String?,
         // Envelopes written before the key ring carried v:3 (or nothing).
@@ -201,7 +219,7 @@ class SecurityService {
   static const int hkdfKeyLength = 32;
 
   /// Current envelope schema version.
-  static const int envelopeVersion = 4;
+  static const int envelopeVersion = 5;
 
   /// Key ring (v4+). Holds the active hardware-derived key plus any historical
   /// keys needed to verify older captures.
@@ -212,6 +230,24 @@ class SecurityService {
   static const String _legacySecretStorageKey = 'veripic_hw_signing_key_v3';
 
   static const int maxPerceptualHammingDistance = 10;
+
+  /// Scene tiles are compared with the same per-tile tolerance as the banner.
+  /// A tile is small enough that JPEG recompression moves only a bit or two,
+  /// while a real edit inside it moves many.
+  static const int maxSceneTileHammingDistance = 10;
+
+  /// The scene above the banner is hashed as a [sceneGrid] x [sceneGrid] grid
+  /// rather than one 64-bit digest.
+  ///
+  /// A single whole-image dHash is far too coarse to catch a localised edit:
+  /// cloning out one object barely moves 64 bits averaged over the entire
+  /// frame. Hashing each tile independently keeps the edit confined to the
+  /// tiles it actually touched, where it is unmistakable.
+  static const int sceneGrid = 4;
+
+  /// Fraction of the frame occupied by the stamp banner, which is hashed
+  /// separately by [computeBannerDHash].
+  static const double bannerFraction = 0.18;
 
   static const String _comMarker = 'VPIC_METADATA:';
   static const String _eofMarker = 'VPIC_PAYLOAD:';
@@ -403,6 +439,7 @@ class SecurityService {
     }
 
     final String pixelHash = computeBannerDHash(decoded);
+    final List<String> sceneTiles = computeSceneTiles(decoded);
     final SigningKey key = await activeKey();
 
     final SignedEnvelope unsigned = SignedEnvelope(
@@ -412,6 +449,7 @@ class SecurityService {
       timestampMs: timestampUtc.millisecondsSinceEpoch,
       deviceId: deviceId,
       pixelHash: pixelHash,
+      sceneTiles: sceneTiles,
       signature: '',
       kid: key.kid,
     );
@@ -575,20 +613,14 @@ class SecurityService {
   // Perceptual hashing
   // =====================================================================
 
-  String computeBannerDHash(img.Image image) {
-    final int bannerHeight = max(8, (image.height * 0.18).toInt());
-    final int bannerY = max(0, image.height - bannerHeight);
-
-    final img.Image bannerCrop = img.copyCrop(
-      image,
-      x: 0,
-      y: bannerY,
-      width: image.width,
-      height: min(bannerHeight, image.height),
-    );
-
+  /// 64-bit difference hash of an already-cropped region.
+  ///
+  /// Resizes to 9x8 and records, for each of the 8 rows, whether each pixel is
+  /// brighter than its right neighbour. Records gradient *direction* rather
+  /// than absolute values, which is what makes it survive recompression.
+  String _dHashOf(img.Image region) {
     final img.Image resized = img.copyResize(
-      bannerCrop,
+      region,
       width: 9,
       height: 8,
       interpolation: img.Interpolation.average,
@@ -614,24 +646,112 @@ class SecurityService {
       }
     }
 
-    return dHash.toRadixString(16).padLeft(16, '0');
+    // Serialise as UNSIGNED 64-bit hex.
+    //
+    // `1 << 63` sets Dart's sign bit, so a plain toRadixString() would emit
+    // "-8000000000000000" — 17 characters, and negative. That fed a negative
+    // BigInt into the distance comparison, where the loop terminates
+    // immediately and reports distance 0: two genuinely different hashes would
+    // compare as identical, silently missing a tamper. Splitting into two
+    // unsigned 32-bit halves keeps the digest 16 characters and always
+    // positive.
+    final int high = (dHash >>> 32) & 0xFFFFFFFF;
+    final int low = dHash & 0xFFFFFFFF;
+    return high.toRadixString(16).padLeft(8, '0') +
+        low.toRadixString(16).padLeft(8, '0');
+  }
+
+  /// Tiled perceptual hash of the photographic scene above the stamp banner.
+  ///
+  /// Returns [sceneGrid] * [sceneGrid] independent dHashes in row-major order.
+  /// Returns an empty list when the scene is too small to tile meaningfully.
+  List<String> computeSceneTiles(img.Image image) {
+    final int bannerHeight = max(8, (image.height * bannerFraction).toInt());
+    final int sceneHeight = image.height - bannerHeight;
+    if (sceneHeight < sceneGrid * 8 || image.width < sceneGrid * 8) {
+      return const <String>[];
+    }
+
+    final int tileW = image.width ~/ sceneGrid;
+    final int tileH = sceneHeight ~/ sceneGrid;
+    if (tileW < 9 || tileH < 8) return const <String>[];
+
+    final List<String> tiles = <String>[];
+    for (int row = 0; row < sceneGrid; row++) {
+      for (int col = 0; col < sceneGrid; col++) {
+        final img.Image tile = img.copyCrop(
+          image,
+          x: col * tileW,
+          y: row * tileH,
+          width: tileW,
+          height: tileH,
+        );
+        tiles.add(_dHashOf(tile));
+      }
+    }
+    return tiles;
+  }
+
+  /// Compares two tile sets. Returns the per-tile Hamming distances, or an
+  /// empty list when the sets are not comparable.
+  List<int> compareSceneTiles(List<String> a, List<String> b) {
+    if (a.isEmpty || b.isEmpty || a.length != b.length) return const <int>[];
+    return <int>[
+      for (int i = 0; i < a.length; i++) hammingDistance(a[i], b[i]),
+    ];
+  }
+
+  String computeBannerDHash(img.Image image) {
+    final int bannerHeight = max(8, (image.height * bannerFraction).toInt());
+    final int bannerY = max(0, image.height - bannerHeight);
+
+    final img.Image bannerCrop = img.copyCrop(
+      image,
+      x: 0,
+      y: bannerY,
+      width: image.width,
+      height: min(bannerHeight, image.height),
+    );
+
+    return _dHashOf(bannerCrop);
+  }
+
+  /// Reads a digest as an unsigned 64-bit value.
+  ///
+  /// Tolerates the historical signed form ("-8000...") written by builds before
+  /// the serialisation fix, so photos signed then still compare correctly.
+  static BigInt? _asUnsigned64(String hash) {
+    if (hash.isEmpty) return null;
+
+    // Tolerate the historical signed spelling, but only as a spelling — the
+    // digest itself must still be a full 64 bits. A short or corrupt hash is
+    // rejected so it scores as maximally distant rather than being compared
+    // numerically against a full one.
+    final bool negative = hash.startsWith('-');
+    final String digits = negative ? hash.substring(1) : hash;
+    if (digits.length != 16) return null;
+
+    try {
+      final BigInt v = BigInt.parse(digits, radix: 16);
+      return (negative ? -v : v).toUnsigned(64);
+    } catch (_) {
+      return null;
+    }
   }
 
   int hammingDistance(String hash1, String hash2) {
-    if (hash1.isEmpty || hash2.isEmpty) return 64;
-    if (hash1.length != hash2.length) return 64;
-    try {
-      BigInt xorVal = BigInt.parse(hash1, radix: 16) ^
-          BigInt.parse(hash2, radix: 16);
-      int distance = 0;
-      while (xorVal > BigInt.zero) {
-        if ((xorVal & BigInt.one) == BigInt.one) distance++;
-        xorVal >>= 1;
-      }
-      return distance;
-    } catch (_) {
-      return 64;
+    final BigInt? a = _asUnsigned64(hash1);
+    final BigInt? b = _asUnsigned64(hash2);
+    if (a == null || b == null) return 64;
+
+    BigInt xorVal = a ^ b;
+    int distance = 0;
+    // Fixed 64 iterations: never terminate on sign, and never loop forever.
+    for (int i = 0; i < 64; i++) {
+      if ((xorVal & BigInt.one) == BigInt.one) distance++;
+      xorVal >>= 1;
     }
+    return distance;
   }
 
   // =====================================================================
@@ -714,7 +834,19 @@ class SecurityService {
     final String base =
         '${e.lat}|${e.lon}|${e.alt}|${e.timestampMs}|${e.deviceId}|${e.pixelHash}';
     final String? kid = e.kid;
-    return kid == null ? 'v1|$base' : 'v4|$base|$kid';
+    if (kid == null) return 'v1|$base';
+
+    // v5 additionally binds the scene tile hashes, so the photographic content
+    // cannot be altered without invalidating the signature. Dropping the tiles
+    // changes the canonical form, so a v5 envelope cannot be stripped back to a
+    // v4 one to escape the scene check.
+    if (e.sceneTiles.isNotEmpty) {
+      return 'v5|$base|${e.sceneTiles.join(',')}|$kid';
+    }
+
+    // Pre-v5 envelopes keep the exact original layout so they still verify
+    // byte-for-byte.
+    return 'v4|$base|$kid';
   }
 
   String _hmacHex(SigningKey key, String data) =>

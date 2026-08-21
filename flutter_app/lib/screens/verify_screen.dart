@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import 'package:printing/printing.dart';
+
+import '../services/certificate_service.dart';
 import '../services/nvidia_vision_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
@@ -20,7 +23,10 @@ class VerifyScreen extends StatefulWidget {
 
 class _VerifyScreenState extends State<VerifyScreen> {
   final VerificationService _service = VerificationService();
+  final CertificateService _certificates = CertificateService();
   final ImagePicker _picker = ImagePicker();
+
+  bool _exporting = false;
 
   bool _busy = false;
   Uint8List? _preview;
@@ -102,6 +108,43 @@ class _VerifyScreenState extends State<VerifyScreen> {
         _busy = false;
         _failure = 'That frame could not be opened. Pick a different file.';
       });
+    }
+  }
+
+  /// Collects the details the statute asks for, then renders and shares the
+  /// certificate. Returns early if the operator cancels.
+  Future<void> _exportCertificate() async {
+    final VerificationReport? report = _report;
+    final Uint8List? bytes = _preview;
+    if (report == null || bytes == null || _exporting) return;
+
+    HapticFeedback.mediumImpact();
+    final CertificateParticulars? particulars =
+        await showDialog<CertificateParticulars>(
+      context: context,
+      builder: (_) => const _ParticularsDialog(),
+    );
+    if (particulars == null || !mounted) return;
+
+    setState(() => _exporting = true);
+    try {
+      final Uint8List pdf = await _certificates.build(
+        report: report,
+        imageBytes: bytes,
+        particulars: particulars,
+      );
+      await Printing.sharePdf(
+        bytes: pdf,
+        filename:
+            'veripic_certificate_\${DateTime.now().millisecondsSinceEpoch}.pdf',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      HapticFeedback.vibrate();
+      setState(() => _failure =
+          'The certificate could not be generated. \$e');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
     }
   }
 
@@ -213,6 +256,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
                   const SectionHead(title: 'Findings'),
                   const SizedBox(height: Tokens.spaceSnug),
                   _DriftCard(report: report),
+                  const SizedBox(height: Tokens.spaceSnug),
+                  _SceneCard(report: report),
                   if (report.aiAnalysis != null) ...<Widget>[
                     const SizedBox(height: Tokens.spaceSnug),
                     _AiCard(analysis: report.aiAnalysis!),
@@ -222,7 +267,18 @@ class _VerifyScreenState extends State<VerifyScreen> {
                     _MetadataDrawer(report: report),
                   ],
                 ],
-                const SizedBox(height: Tokens.spaceSection),
+                if (report != null) ...<Widget>[
+                  const SizedBox(height: Tokens.spaceSection),
+                  ActionButton(
+                    label: _exporting
+                        ? 'Preparing certificate'
+                        : 'Export evidence certificate',
+                    icon: Icons.picture_as_pdf_outlined,
+                    color: Tokens.tintInfo,
+                    onPressed: _exporting ? null : _exportCertificate,
+                  ),
+                ],
+                const SizedBox(height: Tokens.spaceSnug),
                 ActionButton(
                   label: _busy ? 'Checking' : 'Check another frame',
                   icon: Icons.refresh,
@@ -379,6 +435,10 @@ class _Verdict extends StatelessWidget {
         tint = Tokens.statusOk;
         icon = Icons.verified_outlined;
         headline = 'Authentic';
+      case VerificationVerdict.tamperedScene:
+        tint = Tokens.statusAlert;
+        icon = Icons.image_not_supported_outlined;
+        headline = 'Photo edited';
       case VerificationVerdict.tamperedPixels:
         tint = Tokens.statusAlert;
         icon = Icons.broken_image_outlined;
@@ -500,6 +560,111 @@ class _DriftCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+// =======================================================================
+// Scene integrity
+// =======================================================================
+
+class _SceneCard extends StatelessWidget {
+  const _SceneCard({required this.report});
+
+  final VerificationReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    final List<int> tiles = report.sceneTileDistances;
+    final bool checked = report.sceneWasChecked;
+    final int altered = report.alteredTiles;
+    final bool clean = checked && altered == 0;
+
+    final Color tint = !checked
+        ? Tokens.tintNull
+        : (clean ? Tokens.statusOk : Tokens.statusAlert);
+
+    return FieldCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(child: Text('Scene integrity', style: p.cardTitle)),
+              StatusBadge(
+                label: !checked
+                    ? 'not covered'
+                    : (clean ? 'intact' : '\$altered altered'),
+                color: tint,
+              ),
+            ],
+          ),
+          const SizedBox(height: Tokens.spaceSnug),
+          if (!checked)
+            Text(
+              'This frame was signed before scene protection existed, so only '
+              'its stamp banner was covered. The picture itself cannot be '
+              'checked.',
+              style: p.body,
+            )
+          else ...<Widget>[
+            // One square per tile, in the grid they were hashed in.
+            _TileGrid(tiles: tiles),
+            const SizedBox(height: Tokens.spaceTight),
+            Text(
+              'TILES \${tiles.length - altered}/\${tiles.length} MATCH — '
+              'TOLERANCE \${SecurityService.maxSceneTileHammingDistance}',
+              style: p.dataSmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Renders the scene tiles as a grid, so an edit shows up where it happened.
+class _TileGrid extends StatelessWidget {
+  const _TileGrid({required this.tiles});
+
+  final List<int> tiles;
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+    const int side = SecurityService.sceneGrid;
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints c) {
+        final double cell =
+            (c.maxWidth - (side - 1) * Tokens.spaceHair) / side;
+        return Wrap(
+          spacing: Tokens.spaceHair,
+          runSpacing: Tokens.spaceHair,
+          children: <Widget>[
+            for (int i = 0; i < tiles.length; i++)
+              Container(
+                width: cell,
+                height: cell,
+                decoration: BoxDecoration(
+                  color: tiles[i] > SecurityService.maxSceneTileHammingDistance
+                      ? Tokens.statusAlert
+                      : Tokens.statusOk,
+                  borderRadius: Tokens.brControl,
+                  border:
+                      Border.all(color: p.outline, width: Tokens.borderWidth),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '\${tiles[i]}',
+                  style: Tokens.dataSmall.copyWith(color: Tokens.onIdentity),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -635,6 +800,141 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
               HapticFeedback.selectionClick();
               setState(() => _open = !_open);
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =======================================================================
+// Certificate particulars
+// =======================================================================
+
+/// Collects the facts the statute requires about a person, which the app has
+/// no way of knowing. Every field may be left blank — the certificate then
+/// prints a ruled line for it to be completed by hand.
+class _ParticularsDialog extends StatefulWidget {
+  const _ParticularsDialog();
+
+  @override
+  State<_ParticularsDialog> createState() => _ParticularsDialogState();
+}
+
+class _ParticularsDialogState extends State<_ParticularsDialog> {
+  final TextEditingController _name = TextEditingController();
+  final TextEditingController _designation = TextEditingController();
+  final TextEditingController _address = TextEditingController();
+  final TextEditingController _reference = TextEditingController();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _designation.dispose();
+    _address.dispose();
+    _reference.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    return Dialog(
+      backgroundColor: p.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: Tokens.brCard,
+        side: p.side,
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(Tokens.spaceBase),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const SectionHead(title: 'Certificate particulars'),
+            const SizedBox(height: Tokens.spaceSnug),
+            Text(
+              'These identify the person certifying the record. Leave any field '
+              'blank to print a ruled line instead.',
+              style: p.body,
+            ),
+            const SizedBox(height: Tokens.spaceBase),
+            _Field(controller: _name, label: 'Full name'),
+            _Field(controller: _designation, label: 'Designation'),
+            _Field(controller: _address, label: 'Address'),
+            _Field(controller: _reference, label: 'Case or file reference'),
+            const SizedBox(height: Tokens.spaceBase),
+            ActionButton(
+              label: 'Generate certificate',
+              icon: Icons.picture_as_pdf_outlined,
+              onPressed: () => Navigator.of(context).pop(
+                CertificateParticulars(
+                  declarantName: _name.text,
+                  declarantDesignation: _designation.text,
+                  declarantAddress: _address.text,
+                  caseReference: _reference.text,
+                ),
+              ),
+            ),
+            const SizedBox(height: Tokens.spaceSnug),
+            ActionButton(
+              label: 'Cancel',
+              color: p.surfaceInset,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({required this.controller, required this.label});
+
+  final TextEditingController controller;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Tokens.spaceSnug),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(label, style: p.label),
+          const SizedBox(height: Tokens.spaceHair),
+          TextField(
+            controller: controller,
+            style: p.body,
+            cursorColor: p.textPrimary,
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: p.surfaceInset,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: Tokens.spaceSnug,
+                vertical: Tokens.spaceSnug,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: Tokens.brControl,
+                borderSide: p.side,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: Tokens.brControl,
+                borderSide: p.side,
+              ),
+              focusedBorder: const OutlineInputBorder(
+                borderRadius: Tokens.brControl,
+                borderSide: BorderSide(
+                  color: Tokens.accent,
+                  width: Tokens.borderWidth,
+                ),
+              ),
+            ),
           ),
         ],
       ),

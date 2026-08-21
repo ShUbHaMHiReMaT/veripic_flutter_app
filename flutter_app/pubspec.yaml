@@ -33,6 +33,9 @@ dependencies:
   android_id: ^0.5.2
   gal: ^2.3.3
   geocoding: ^3.0.0
+  pdf: ^3.12.0
+  printing: ^5.14.3
+  share_plus: ^12.0.2
 
 dev_dependencies:
   flutter_test:

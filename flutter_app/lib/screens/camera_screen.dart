@@ -231,7 +231,11 @@ class _CameraScreenState extends State<CameraScreen>
     return DateTime.now().difference(p.timestamp) > _staleFixAge;
   }
 
-  bool get _fixIsUsable => _livePosition != null && !_fixIsStale;
+  /// True when the OS says the live fix came from a mock provider.
+  bool get _fixIsMocked => _livePosition?.isMocked ?? false;
+
+  bool get _fixIsUsable =>
+      _livePosition != null && !_fixIsStale && !_fixIsMocked;
 
   // ---- Interactions --------------------------------------------------
 
@@ -281,9 +285,13 @@ class _CameraScreenState extends State<CameraScreen>
     if (_capturing) return;
 
     if (!_fixIsUsable) {
-      _showBlocked(_livePosition == null
-          ? 'No GPS fix yet. Move away from walls and try again.'
-          : 'GPS fix is stale. Wait for it to refresh.');
+      _showBlocked(switch (_livePosition) {
+        null => 'No GPS fix yet. Move away from walls and try again.',
+        _ when _fixIsMocked =>
+          'Location is being faked by another app. Turn off the mock location '
+              'app and developer options to capture a signed frame.',
+        _ => 'GPS fix is stale. Wait for it to refresh.',
+      });
       return;
     }
 
@@ -311,6 +319,12 @@ class _CameraScreenState extends State<CameraScreen>
           duration: Duration(seconds: 2),
           content: Text('Frame stamped, signed, and saved.'),
         ));
+    } on MockLocationException {
+      HapticFeedback.vibrate();
+      if (mounted) {
+        _showBlocked('Location is being faked by another app, so the frame was '
+            'not signed. Turn off the mock location app and try again.');
+      }
     } catch (e) {
       HapticFeedback.vibrate();
       if (mounted) _showBlocked('Capture failed. $e');
@@ -402,7 +416,11 @@ class _CameraScreenState extends State<CameraScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              _StatusReadout(position: _livePosition, stale: _fixIsStale),
+              _StatusReadout(
+                position: _livePosition,
+                stale: _fixIsStale,
+                mocked: _fixIsMocked,
+              ),
               const SizedBox(height: Tokens.spaceSnug),
               Expanded(child: _buildFeed()),
               const SizedBox(height: Tokens.spaceSnug),
@@ -507,10 +525,15 @@ class _CameraScreenState extends State<CameraScreen>
 /// Never hidden — a camera that silently loses GPS is worse than one that
 /// says so.
 class _StatusReadout extends StatelessWidget {
-  const _StatusReadout({required this.position, required this.stale});
+  const _StatusReadout({
+    required this.position,
+    required this.stale,
+    required this.mocked,
+  });
 
   final Position? position;
   final bool stale;
+  final bool mocked;
 
   @override
   Widget build(BuildContext context) {
@@ -520,6 +543,9 @@ class _StatusReadout extends StatelessWidget {
     final Color tint;
     if (p == null) {
       text = 'no fix — searching';
+      tint = Tokens.statusAlert;
+    } else if (mocked) {
+      text = 'fix faked — blocked';
       tint = Tokens.statusAlert;
     } else if (stale) {
       text = 'fix ±${p.accuracy.round()}m — stale';

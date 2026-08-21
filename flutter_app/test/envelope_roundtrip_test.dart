@@ -225,6 +225,95 @@ void main() {
     expect(check.valid, isTrue);
     expect(check.origin, SigningKeyOrigin.legacyRandom);
   });
+
+  group('scene protection', () {
+    test('tiles the scene and binds them into the signature', () {
+      final SecurityService svc = SecurityService();
+      final img.Image frame = img.Image(width: 320, height: 240);
+      // Give the frame structure so tiles are not all identical.
+      for (int y = 0; y < frame.height; y++) {
+        for (int x = 0; x < frame.width; x++) {
+          frame.setPixelRgb(x, y, (x * 7) % 256, (y * 5) % 256, (x + y) % 256);
+        }
+      }
+
+      final List<String> tiles = svc.computeSceneTiles(frame);
+      expect(tiles.length, SecurityService.sceneGrid * SecurityService.sceneGrid,
+          reason: 'one dHash per tile, row-major');
+      for (final String t in tiles) {
+        expect(t.length, 16, reason: 'each tile is a 64-bit unsigned hex digest');
+      }
+
+      // Recomputing over the same pixels is stable.
+      expect(svc.computeSceneTiles(frame), tiles);
+    });
+
+    test('an edit confined to one tile moves only that tile', () {
+      final SecurityService svc = SecurityService();
+      final img.Image frame = img.Image(width: 320, height: 240);
+      for (int y = 0; y < frame.height; y++) {
+        for (int x = 0; x < frame.width; x++) {
+          frame.setPixelRgb(x, y, (x * 7) % 256, (y * 5) % 256, (x + y) % 256);
+        }
+      }
+      final List<String> before = svc.computeSceneTiles(frame);
+
+      // Paint out a block inside the first tile only.
+      img.fillRect(frame,
+          x1: 2, y1: 2, x2: 60, y2: 40, color: img.ColorRgb8(255, 255, 255));
+
+      final List<String> after = svc.computeSceneTiles(frame);
+      final List<int> deltas = svc.compareSceneTiles(before, after);
+
+      expect(deltas.length, before.length);
+      expect(deltas.first, greaterThan(0),
+          reason: 'the edited tile must register a change');
+
+      final int altered = deltas
+          .where((int d) => d > SecurityService.maxSceneTileHammingDistance)
+          .length;
+      expect(altered, lessThan(deltas.length),
+          reason: 'a local edit must not invalidate every tile');
+    });
+
+    test('mismatched tile sets are not comparable', () {
+      final SecurityService svc = SecurityService();
+      expect(svc.compareSceneTiles(const <String>[], const <String>['a']),
+          isEmpty);
+      expect(
+          svc.compareSceneTiles(const <String>['a'], const <String>['a', 'b']),
+          isEmpty);
+    });
+
+    test('stripping the scene tiles invalidates the signature', () async {
+      final SignedImage signed = await security.signAndEmbed(
+        jpegBytes: _syntheticJpeg(),
+        position: _position(),
+        timestampUtc: DateTime.utc(2026, 3, 1, 12),
+        deviceId: 'device',
+      );
+
+      // Only meaningful if the frame was large enough to tile at all.
+      if (signed.envelope.sceneTiles.isEmpty) return;
+
+      final SignedEnvelope stripped = SignedEnvelope(
+        lat: signed.envelope.lat,
+        lon: signed.envelope.lon,
+        alt: signed.envelope.alt,
+        timestampMs: signed.envelope.timestampMs,
+        deviceId: signed.envelope.deviceId,
+        pixelHash: signed.envelope.pixelHash,
+        signature: signed.envelope.signature,
+        kid: signed.envelope.kid,
+        version: signed.envelope.version,
+      );
+
+      expect(stripped.sceneTiles, isEmpty);
+      expect(await security.verifySignature(stripped), isFalse,
+          reason: 'dropping the tiles must not escape the scene check');
+      expect(await security.verifySignature(signed.envelope), isTrue);
+    });
+  });
 }
 
 String _hmacHex(List<int> key, String data) =>
