@@ -121,7 +121,8 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
                     ),
                     DataLine(
                       label: 'Captured',
-                      value: '${DateFormat('ddMMMyy HH:mm:ss').format(captured).toUpperCase()} UTC',
+                      value:
+                          '${DateFormat('ddMMMyy HH:mm:ss').format(captured).toUpperCase()} UTC',
                     ),
                     DataLine(label: 'Device', value: e.deviceId),
                     DataLine(label: 'Signing key', value: e.kid ?? '—'),

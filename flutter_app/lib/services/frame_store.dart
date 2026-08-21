@@ -42,8 +42,8 @@ class FrameStore {
 
         frames.add(StoredFrame(
           file: entity,
-          capturedAt:
-              DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true).toLocal(),
+          capturedAt: DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true)
+              .toLocal(),
         ));
       }
 

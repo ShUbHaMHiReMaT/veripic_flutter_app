@@ -20,59 +20,55 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Palette p = Palette.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            Tokens.spaceBase,
-            Tokens.spaceSection,
-            Tokens.spaceBase,
-            Tokens.spaceScreen,
-          ),
-          children: <Widget>[
-            Text('Capture now.\nVerify anytime.', style: p.display),
-            const SizedBox(height: Tokens.spaceSection),
-            ActionButton(
-              label: 'Open viewfinder',
-              icon: Icons.photo_camera_outlined,
-              onPressed: () => _open(context, const CameraScreen()),
-            ),
-            const SizedBox(height: Tokens.spaceSection),
-            const SectionHead(title: 'Tools'),
-            const SizedBox(height: Tokens.spaceSnug),
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Expanded(
-                    child: TabCard(
-                      icon: Icons.center_focus_strong_outlined,
-                      tint: Tokens.statusOk,
-                      title: 'Viewfinder',
-                      meta: const <String>['stamp + sign'],
-                      onTap: () => _open(context, const CameraScreen()),
-                    ),
-                  ),
-                  const SizedBox(width: Tokens.spaceSnug),
-                  Expanded(
-                    child: TabCard(
-                      icon: Icons.fact_check_outlined,
-                      tint: Tokens.tintInfo,
-                      title: 'Check a frame',
-                      meta: const <String>['4 checks'],
-                      onTap: () => _open(context, const VerifyScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: Tokens.spaceSection),
-            const SectionHead(title: 'This device'),
-            const SizedBox(height: Tokens.spaceSnug),
-            const _DeviceCard(),
-          ],
-        ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        Tokens.spaceBase,
+        Tokens.spaceTight,
+        Tokens.spaceBase,
+        Tokens.spaceSection,
       ),
+      children: <Widget>[
+        Text('Capture now.\nVerify anytime.', style: p.display),
+        const SizedBox(height: Tokens.spaceSection),
+        ActionButton(
+          label: 'Open viewfinder',
+          icon: Icons.photo_camera_outlined,
+          onPressed: () => _open(context, const CameraScreen()),
+        ),
+        const SizedBox(height: Tokens.spaceSection),
+        const SectionHead(title: 'Tools'),
+        const SizedBox(height: Tokens.spaceSnug),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Expanded(
+                child: TabCard(
+                  icon: Icons.center_focus_strong_outlined,
+                  tint: Tokens.statusOk,
+                  title: 'Viewfinder',
+                  meta: const <String>['stamp + sign'],
+                  onTap: () => _open(context, const CameraScreen()),
+                ),
+              ),
+              const SizedBox(width: Tokens.spaceSnug),
+              Expanded(
+                child: TabCard(
+                  icon: Icons.fact_check_outlined,
+                  tint: Tokens.tintInfo,
+                  title: 'Check a frame',
+                  meta: const <String>['4 checks'],
+                  onTap: () => _open(context, const VerifyScreen()),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Tokens.spaceBase),
+        const SectionHead(title: 'This device'),
+        const SizedBox(height: Tokens.spaceSnug),
+        const _DeviceCard(),
+      ],
     );
   }
 }

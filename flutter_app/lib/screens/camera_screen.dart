@@ -19,6 +19,12 @@ const double _weakFixMetres = 15;
 /// A fix older than this is stale and no longer trustworthy for a stamp.
 const Duration _staleFixAge = Duration(seconds: 30);
 
+/// Permission was granted but the device's location radio is switched off.
+/// Distinct from a denied permission because the fix is different.
+class _LocationOffException implements Exception {
+  const _LocationOffException();
+}
+
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
@@ -39,9 +45,20 @@ class _CameraScreenState extends State<CameraScreen>
   bool _capturing = false;
   String? _error;
   PermissionRequiredException? _permissionError;
+  bool _locationOff = false;
 
   int _cameraIndex = 0;
   bool _torchOn = false;
+
+  /// Guards against two concurrent boots. The OS permission dialog drives the
+  /// app to `inactive`, and the naive lifecycle handler used to dispose the
+  /// controller mid-initialise, then start a second boot on `resumed` that
+  /// raced the first — leaving the screen stuck on "Starting camera".
+  bool _booting = false;
+
+  /// True while an OS permission dialog is on screen. The app is `inactive`
+  /// then, but the camera must survive it.
+  bool _awaitingPermission = false;
 
   /// Reverse-geocoded site name for the stamp card. Resolved on first fix and
   /// again only after the operator has actually moved.
@@ -70,17 +87,36 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _boot() async {
-    setState(() {
-      _initializing = true;
-      _error = null;
-      _permissionError = null;
-    });
+    if (_booting) return;
+    _booting = true;
+    if (mounted) {
+      setState(() {
+        _initializing = true;
+        _error = null;
+        _permissionError = null;
+        _locationOff = false;
+      });
+    }
     try {
       if (cameras.isEmpty) {
         throw StateError('No camera on this device');
       }
       _cameraIndex = _cameraIndex.clamp(0, cameras.length - 1);
-      await _camera.initialize(cameras[_cameraIndex]);
+
+      // The first initialise may raise the OS permission dialog; flag it so
+      // the lifecycle handler leaves the controller alone while it is up.
+      _awaitingPermission = true;
+      try {
+        await _camera.initialize(cameras[_cameraIndex]);
+      } finally {
+        _awaitingPermission = false;
+      }
+
+      // Permission granted but the GPS radio is off is a different problem
+      // with a different fix, so surface it separately.
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw const _LocationOffException();
+      }
 
       _clockTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() => _now = DateTime.now());
@@ -107,6 +143,13 @@ class _CameraScreenState extends State<CameraScreen>
           _permissionError = e;
         });
       }
+    } on _LocationOffException {
+      if (mounted) {
+        setState(() {
+          _initializing = false;
+          _locationOff = true;
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -114,6 +157,8 @@ class _CameraScreenState extends State<CameraScreen>
           _error = e.toString();
         });
       }
+    } finally {
+      _booting = false;
     }
   }
 
@@ -134,10 +179,10 @@ class _CameraScreenState extends State<CameraScreen>
       if (!mounted || marks.isEmpty) return;
       final Placemark m = marks.first;
       final String name = <String?>[
-        m.subLocality,
-        m.locality,
-        m.administrativeArea,
-      ].firstWhere((String? s) => s != null && s.isNotEmpty,
+            m.subLocality,
+            m.locality,
+            m.administrativeArea,
+          ].firstWhere((String? s) => s != null && s.isNotEmpty,
               orElse: () => null) ??
           'Unnamed site';
       setState(() {
@@ -153,12 +198,17 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A permission dialog or an in-flight boot must not be interrupted: the
+    // dialog makes the app `inactive` without the user ever leaving.
+    if (_awaitingPermission || _booting) return;
+
     final CameraController? c = _camera.controller;
-    if (c == null || !c.value.isInitialized) return;
     if (state == AppLifecycleState.inactive) {
-      _camera.dispose();
+      if (c != null && c.value.isInitialized) _camera.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _boot();
+      // Re-acquire whenever the preview is not live — including after the user
+      // returned from system settings having just enabled location.
+      if (c == null || !c.value.isInitialized || _locationOff) _boot();
     }
   }
 
@@ -301,6 +351,21 @@ class _CameraScreenState extends State<CameraScreen>
       );
     }
 
+    if (_locationOff) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Viewfinder')),
+        body: Padding(
+          padding: const EdgeInsets.all(Tokens.spaceBase),
+          child: ErrorState(
+            message: 'Location is switched off, so a frame cannot be stamped. '
+                'Turn it on and the viewfinder starts on its own.',
+            actionLabel: 'Open location settings',
+            onAction: () => Geolocator.openLocationSettings(),
+          ),
+        ),
+      );
+    }
+
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Viewfinder')),
@@ -389,8 +454,8 @@ class _CameraScreenState extends State<CameraScreen>
                     LayoutBuilder(
                       builder:
                           (BuildContext context, BoxConstraints constraints) {
-                        final Size area = Size(
-                            constraints.maxWidth, constraints.maxHeight);
+                        final Size area =
+                            Size(constraints.maxWidth, constraints.maxHeight);
                         return GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTapDown: (TapDownDetails d) =>
@@ -402,8 +467,8 @@ class _CameraScreenState extends State<CameraScreen>
                               fit: BoxFit.cover,
                               child: SizedBox(
                                 width: area.width,
-                                height: area.width *
-                                    controller.value.aspectRatio,
+                                height:
+                                    area.width * controller.value.aspectRatio,
                                 child: CameraPreview(controller),
                               ),
                             ),

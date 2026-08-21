@@ -2,7 +2,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import 'screens/home_screen.dart';
+import 'screens/app_shell.dart';
+import 'theme/theme_controller.dart';
 import 'theme/veripic_theme.dart';
 
 List<CameraDescription> cameras = <CameraDescription>[];
@@ -19,23 +20,31 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Camera enumeration failed: $e');
   }
-  runApp(const VeriPicApp());
+  final ThemeController themeController = ThemeController();
+  await themeController.load();
+
+  runApp(VeriPicApp(themeController: themeController));
 }
 
 class VeriPicApp extends StatelessWidget {
-  const VeriPicApp({super.key});
+  const VeriPicApp({super.key, required this.themeController});
+
+  final ThemeController themeController;
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'VeriPic',
-      debugShowCheckedModeBanner: false,
-      theme: Tokens.light(),
-      darkTheme: Tokens.dark(),
-      // Follow the system. Light remains the default when the system expresses
-      // no preference, because the app is used outdoors.
-      themeMode: ThemeMode.system,
-      home: const HomeScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeController,
+      builder: (BuildContext context, ThemeMode mode, _) => MaterialApp(
+        title: 'VeriPic',
+        debugShowCheckedModeBanner: false,
+        theme: Tokens.light(),
+        darkTheme: Tokens.dark(),
+        // Defaults to following the device; the toggle in the app bar lets the
+        // user pin light or dark instead.
+        themeMode: mode,
+        home: AppShell(themeController: themeController),
+      ),
     );
   }
 }

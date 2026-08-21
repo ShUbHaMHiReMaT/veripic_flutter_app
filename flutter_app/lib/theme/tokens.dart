@@ -67,8 +67,7 @@ class Palette extends ThemeExtension<Palette> {
         ),
       ];
 
-  BorderSide get side =>
-      BorderSide(color: outline, width: Tokens.borderWidth);
+  BorderSide get side => BorderSide(color: outline, width: Tokens.borderWidth);
 
   @override
   Palette copyWith({

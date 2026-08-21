@@ -31,64 +31,59 @@ class _FramesScreenState extends State<FramesScreen> {
   Widget build(BuildContext context) {
     final Palette p = Palette.of(context);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Frames')),
-      body: FutureBuilder<List<StoredFrame>>(
-        future: _future,
-        builder:
-            (BuildContext context, AsyncSnapshot<List<StoredFrame>> snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Padding(
-              padding: EdgeInsets.all(Tokens.spaceBase),
-              child: LoadingState(message: 'Reading stored frames'),
-            );
-          }
-
-          if (snap.hasError) {
-            return ErrorState(
-              message: 'Stored frames could not be read. Pull down to try '
-                  'again.',
-              actionLabel: 'Try again',
-              onAction: _refresh,
-            );
-          }
-
-          final List<StoredFrame> frames = snap.data ?? const <StoredFrame>[];
-          if (frames.isEmpty) {
-            return const EmptyState(
-              icon: Icons.photo_outlined,
-              title: 'No frames yet',
-              message: 'Frames you capture are stamped, signed, and collected '
-                  'here. Open the viewfinder to take the first one.',
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            color: p.textPrimary,
-            backgroundColor: p.surface,
-            child: GridView.builder(
-              padding: const EdgeInsets.fromLTRB(
-                Tokens.spaceBase,
-                Tokens.spaceBase,
-                Tokens.spaceBase,
-                Tokens.spaceScreen,
-              ),
-              physics: const AlwaysScrollableScrollPhysics(),
-              gridDelegate:
-                  const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 200,
-                mainAxisSpacing: Tokens.spaceBase,
-                crossAxisSpacing: Tokens.spaceSnug,
-                childAspectRatio: 0.82,
-              ),
-              itemCount: frames.length,
-              itemBuilder: (BuildContext context, int i) =>
-                  _FrameCell(frame: frames[i]),
-            ),
+    return FutureBuilder<List<StoredFrame>>(
+      future: _future,
+      builder: (BuildContext context, AsyncSnapshot<List<StoredFrame>> snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.all(Tokens.spaceBase),
+            child: LoadingState(message: 'Reading stored frames'),
           );
-        },
-      ),
+        }
+
+        if (snap.hasError) {
+          return ErrorState(
+            message: 'Stored frames could not be read. Pull down to try '
+                'again.',
+            actionLabel: 'Try again',
+            onAction: _refresh,
+          );
+        }
+
+        final List<StoredFrame> frames = snap.data ?? const <StoredFrame>[];
+        if (frames.isEmpty) {
+          return const EmptyState(
+            icon: Icons.photo_outlined,
+            title: 'No frames yet',
+            message: 'Frames you capture are stamped, signed, and collected '
+                'here. Open the viewfinder to take the first one.',
+          );
+        }
+
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          color: p.textPrimary,
+          backgroundColor: p.surface,
+          child: GridView.builder(
+            padding: const EdgeInsets.fromLTRB(
+              Tokens.spaceBase,
+              Tokens.spaceBase,
+              Tokens.spaceBase,
+              Tokens.spaceScreen,
+            ),
+            physics: const AlwaysScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 200,
+              mainAxisSpacing: Tokens.spaceBase,
+              crossAxisSpacing: Tokens.spaceSnug,
+              childAspectRatio: 0.82,
+            ),
+            itemCount: frames.length,
+            itemBuilder: (BuildContext context, int i) =>
+                _FrameCell(frame: frames[i]),
+          ),
+        );
+      },
     );
   }
 }

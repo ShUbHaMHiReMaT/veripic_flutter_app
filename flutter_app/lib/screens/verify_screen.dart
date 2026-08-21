@@ -130,8 +130,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
               ActionButton(
                 label: 'Choose from gallery',
                 icon: Icons.folder_outlined,
-                onPressed: () =>
-                    Navigator.of(context).pop(ImageSource.gallery),
+                onPressed: () => Navigator.of(context).pop(ImageSource.gallery),
               ),
               const SizedBox(height: Tokens.spaceSnug),
               ActionButton(
@@ -610,7 +609,8 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
                   ),
                   DataLine(
                     label: 'Captured',
-                    value: '${DateFormat('ddMMMyy HH:mm:ss').format(captured).toUpperCase()} UTC',
+                    value:
+                        '${DateFormat('ddMMMyy HH:mm:ss').format(captured).toUpperCase()} UTC',
                   ),
                   DataLine(label: 'Device', value: e.deviceId),
                   DataLine(label: 'Signing key', value: e.kid ?? '—'),
