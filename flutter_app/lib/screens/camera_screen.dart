@@ -330,7 +330,7 @@ class _CameraScreenState extends State<CameraScreen>
             if (_blockedReason != null)
               AccentPanel(
                 accent: Tokens.statusAlert,
-                background: Tokens.background,
+                background: Tokens.canvas,
                 padding: const EdgeInsets.fromLTRB(
                     Tokens.spaceSnug, Tokens.spaceTight, Tokens.spaceSnug, Tokens.spaceTight),
                 child: Text(_blockedReason!,
@@ -452,15 +452,15 @@ class _StatusReadout extends StatelessWidget {
       color = Tokens.statusAlert;
     } else {
       text = 'FIX ±${p.accuracy.round()}M';
-      color = Tokens.actionPrimary;
+      color = Tokens.textPrimary;
     }
 
     return Container(
       height: Tokens.touchMin,
       padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceHair),
       decoration: const BoxDecoration(
-        color: Tokens.background,
-        border: Border(bottom: Tokens.sideHairline),
+        color: Tokens.canvas,
+        border: Border(bottom: Tokens.sideOutline),
       ),
       child: Row(
         children: <Widget>[
@@ -564,8 +564,8 @@ class _ControlRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(
           horizontal: Tokens.spaceBase, vertical: Tokens.spaceSnug),
       decoration: const BoxDecoration(
-        color: Tokens.background,
-        border: Border(top: Tokens.sideHairline),
+        color: Tokens.canvas,
+        border: Border(top: Tokens.sideOutline),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -629,24 +629,24 @@ class _ShutterState extends State<_Shutter> {
               scale: _pressed && live ? 0.96 : 1,
               duration: const Duration(milliseconds: 90),
               child: Container(
-                width: Tokens.controlSize,
-                height: Tokens.controlSize,
+                width: Tokens.shutterSize,
+                height: Tokens.shutterSize,
                 decoration: BoxDecoration(
                   color: !live
                       ? Tokens.surfaceInset
-                      : (_pressed ? Tokens.actionPrimaryPressed : Tokens.actionPrimary),
+                      : (_pressed ? Tokens.accentPressed : Tokens.textPrimary),
                   borderRadius: Tokens.brControl,
                 ),
                 child: widget.busy
                     ? const Padding(
                         padding: EdgeInsets.all(Tokens.spaceSnug),
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Tokens.surfaceRaised),
+                            strokeWidth: 2, color: Tokens.surface),
                       )
                     : Icon(
                         Icons.circle,
                         size: Tokens.iconSmall,
-                        color: live ? Tokens.surfaceRaised : Tokens.textSecondary,
+                        color: live ? Tokens.surface : Tokens.textSecondary,
                       ),
               ),
             ),
@@ -682,7 +682,7 @@ class _FrameThumb extends StatelessWidget {
               height: Tokens.thumbSize,
               decoration: BoxDecoration(
                 color: Tokens.surfaceInset,
-                border: Border.all(color: Tokens.borderHairline),
+                border: Border.all(color: Tokens.outline),
                 borderRadius: Tokens.brControl,
               ),
               clipBehavior: Clip.antiAlias,
@@ -717,15 +717,15 @@ class _IconSquare extends StatelessWidget {
           height: Tokens.touchMin + Tokens.spaceBase,
           child: Center(
             child: Container(
-              width: Tokens.controlSize,
-              height: Tokens.controlSize,
+              width: Tokens.shutterSize,
+              height: Tokens.shutterSize,
               decoration: BoxDecoration(
-                color: Tokens.surfaceRaised,
-                border: Border.all(color: Tokens.borderHairline),
+                color: Tokens.surface,
+                border: Border.all(color: Tokens.outline),
                 borderRadius: Tokens.brControl,
               ),
               child: Icon(icon,
-                  size: Tokens.iconBase, color: onTap == null ? Tokens.borderHairline : Tokens.textPrimary),
+                  size: Tokens.iconBase, color: onTap == null ? Tokens.outline : Tokens.textPrimary),
             ),
           ),
         ),
@@ -754,7 +754,7 @@ class _LastFramePage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceTight, Tokens.spaceBase, Tokens.spaceScreen),
         children: <Widget>[
           Container(
-            decoration: BoxDecoration(border: Border.all(color: Tokens.borderHairline)),
+            decoration: BoxDecoration(border: Border.all(color: Tokens.outline)),
             child: ColoredBox(
               color: Tokens.surfaceInset,
               child: InteractiveViewer(

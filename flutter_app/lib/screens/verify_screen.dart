@@ -98,7 +98,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
     HapticFeedback.selectionClick();
     final ImageSource? source = await showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: Tokens.surfaceRaised,
+      backgroundColor: Tokens.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(Tokens.radiusControl)),
       ),
@@ -109,21 +109,21 @@ class _VerifyScreenState extends State<VerifyScreen> {
             const SizedBox(height: Tokens.spaceBase),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: Tokens.spaceBase),
-              child: Text('SELECT A FRAME', style: Tokens.sectionHead),
+              child: SectionHead(title: 'Select a frame'),
             ),
             const SizedBox(height: Tokens.spaceTight),
-            const Divider(height: 1, color: Tokens.borderHairline),
+            const Divider(height: 1, color: Tokens.outline),
             ListTile(
               minVerticalPadding: Tokens.spaceSnug,
-              leading: const Icon(Icons.folder_outlined, color: Tokens.actionPrimary),
+              leading: const Icon(Icons.folder_outlined, color: Tokens.textPrimary),
               title: const Text('Choose from gallery', style: Tokens.body),
               onTap: () => Navigator.of(context).pop(ImageSource.gallery),
             ),
-            const Divider(height: 1, color: Tokens.borderHairline),
+            const Divider(height: 1, color: Tokens.outline),
             ListTile(
               minVerticalPadding: Tokens.spaceSnug,
               leading:
-                  const Icon(Icons.photo_camera_outlined, color: Tokens.actionPrimary),
+                  const Icon(Icons.photo_camera_outlined, color: Tokens.textPrimary),
               title: const Text('Take a photo', style: Tokens.body),
               onTap: () => Navigator.of(context).pop(ImageSource.camera),
             ),
@@ -153,7 +153,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 if (preview != null) ...<Widget>[
                   Container(
                     decoration:
-                        BoxDecoration(border: Border.all(color: Tokens.borderHairline)),
+                        BoxDecoration(border: Border.all(color: Tokens.outline)),
                     child: ColoredBox(
                       color: Tokens.surfaceInset,
                       child: AspectRatio(
@@ -259,7 +259,7 @@ class _Checklist extends StatelessWidget {
       child: Column(
         children: <Widget>[
           for (int i = 0; i < VerifyStage.values.length; i++) ...<Widget>[
-            if (i > 0) const Divider(height: 1, color: Tokens.borderHairline),
+            if (i > 0) const Divider(height: 1, color: Tokens.outline),
             _StageRow(
               index: i + 1,
               stage: VerifyStage.values[i],
@@ -332,7 +332,7 @@ class _StageMark extends StatelessWidget {
         height: Tokens.spaceSection,
         child: Padding(
           padding: EdgeInsets.all(Tokens.spaceHair),
-          child: CircularProgressIndicator(strokeWidth: 2, color: Tokens.actionPrimary),
+          child: CircularProgressIndicator(strokeWidth: 2, color: Tokens.textPrimary),
         ),
       );
     }
@@ -341,11 +341,11 @@ class _StageMark extends StatelessWidget {
     late final Widget mark;
     switch (state) {
       case StageState.pending:
-        color = Tokens.borderHairline;
+        color = Tokens.outline;
         mark = Text('$index', style: Tokens.dataSmall);
       case StageState.passed:
-        color = Tokens.actionPrimary;
-        mark = const Icon(Icons.check, size: 14, color: Tokens.actionPrimary);
+        color = Tokens.textPrimary;
+        mark = const Icon(Icons.check, size: 14, color: Tokens.textPrimary);
       case StageState.failed:
         color = Tokens.statusAlert;
         mark = const Icon(Icons.close, size: 14, color: Tokens.statusAlert);
@@ -353,10 +353,10 @@ class _StageMark extends StatelessWidget {
         color = Tokens.statusAlert;
         mark = const Icon(Icons.priority_high, size: 14, color: Tokens.statusAlert);
       case StageState.skipped:
-        color = Tokens.borderHairline;
+        color = Tokens.outline;
         mark = const Icon(Icons.remove, size: 14, color: Tokens.textSecondary);
       case StageState.running:
-        color = Tokens.borderHairline;
+        color = Tokens.outline;
         mark = const SizedBox.shrink();
     }
 
@@ -389,7 +389,7 @@ class _Verdict extends StatelessWidget {
 
     switch (report.verdict) {
       case VerificationVerdict.authentic:
-        accent = Tokens.actionPrimary;
+        accent = Tokens.textPrimary;
         headline = 'AUTHENTIC';
       case VerificationVerdict.tamperedPixels:
         accent = Tokens.statusAlert;
@@ -449,7 +449,7 @@ class _DriftCard extends StatelessWidget {
     const int threshold = SecurityService.maxPerceptualHammingDistance;
     final int d = report.hammingDistance;
     final bool within = d <= threshold;
-    final Color color = within ? Tokens.actionPrimary : Tokens.statusAlert;
+    final Color color = within ? Tokens.textPrimary : Tokens.statusAlert;
     final SignatureCheck? check = report.signatureCheck;
 
     return FieldCard(
@@ -489,11 +489,11 @@ class _DriftCard extends StatelessWidget {
           Text('HAMMING $d / 64 — TOLERANCE $threshold',
               style: Tokens.dataSmall),
           if (check != null) ...<Widget>[
-            const Divider(height: Tokens.spaceSection, color: Tokens.borderHairline),
+            const Divider(height: Tokens.spaceSection, color: Tokens.outline),
             DataLine(
               label: 'Signature',
               value: check.valid ? 'VALID' : 'INVALID',
-              valueColor: check.valid ? Tokens.actionPrimary : Tokens.statusAlert,
+              valueColor: check.valid ? Tokens.textPrimary : Tokens.statusAlert,
               copyable: false,
             ),
             if (check.matchedKey != null)
@@ -527,7 +527,7 @@ class _AiCard extends StatelessWidget {
     final double? score = analysis.syntheticScore;
     final bool unavailable = analysis.error != null || score == null;
     final Color color =
-        unavailable ? Tokens.textSecondary : (score > 0.5 ? Tokens.statusAlert : Tokens.actionPrimary);
+        unavailable ? Tokens.textSecondary : (score > 0.5 ? Tokens.statusAlert : Tokens.textPrimary);
 
     return FieldCard(
       child: Column(
@@ -616,7 +616,7 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const Divider(height: 1, color: Tokens.borderHairline),
+                  const Divider(height: 1, color: Tokens.outline),
                   const SizedBox(height: Tokens.spaceTight),
                   DataLine(
                     label: 'Coordinates',
@@ -639,7 +639,7 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
                       label: 'Recomputed',
                       value: widget.report.recomputedHash!,
                       valueColor: widget.report.recomputedHash == e.pixelHash
-                          ? Tokens.actionPrimary
+                          ? Tokens.textPrimary
                           : Tokens.statusAlert,
                     ),
                   DataLine(label: 'Signature', value: e.signature),

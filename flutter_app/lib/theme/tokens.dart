@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
 /// The token layer — the only place in the codebase where a raw colour, size,
-/// font name, radius, or duration is allowed to appear.
+/// font name, radius, shadow, or duration is allowed to appear.
 ///
 /// Names describe the *role* a value plays, never what it looks like, so a
 /// palette change never invalidates a name. Derived from `CLAUDE.md`; do not
-/// add a token that the design system does not sanction.
+/// add a token the design system does not sanction.
 class Tokens {
   Tokens._();
 
@@ -14,76 +14,98 @@ class Tokens {
   // =====================================================================
 
   /// App background.
-  static const Color background = Color(0xFFF0EDE4);
+  static const Color canvas = Color(0xFFFCF9F0);
 
-  /// Inset areas, viewfinder placeholder, disabled fills.
-  static const Color surfaceInset = Color(0xFFE2DDCE);
+  /// Cards, sheets, anything raised off the canvas.
+  static const Color surface = Color(0xFFFFFFFF);
 
-  /// Cards that sit above the background.
-  static const Color surfaceRaised = Color(0xFFFFFFFF);
+  /// Inset wells, viewfinder placeholder, disabled fills.
+  static const Color surfaceInset = Color(0xFFF1EDE1);
 
-  /// Hairline borders and dividers.
-  static const Color borderHairline = Color(0xFFC7C0AE);
+  /// Every border, every divider, every shadow.
+  static const Color outline = Color(0xFF000000);
 
   /// Primary text.
-  static const Color textPrimary = Color(0xFF1E2A22);
+  static const Color textPrimary = Color(0xFF000000);
 
-  /// Secondary text and all metadata.
-  static const Color textSecondary = Color(0xFF5A6B5F);
+  /// Secondary text and metadata.
+  static const Color textSecondary = Color(0xFF6B6B6B);
 
-  /// Text and icons drawn on top of [actionPrimary].
-  static const Color textOnAction = Color(0xFFFFFFFF);
+  /// Primary action — shutter, confirm.
+  static const Color accent = Color(0xFFFFD84D);
 
-  /// Primary actions, shutter, active state.
-  static const Color actionPrimary = Color(0xFF2F5D45);
+  /// Pressed state for [accent].
+  static const Color accentPressed = Color(0xFFE8C22F);
 
-  /// Pressed state for [actionPrimary].
-  static const Color actionPrimaryPressed = Color(0xFF1F3E2E);
+  // ---- State. Reserved for state; never used as category identity. ----
 
-  /// Live/recording, degraded GPS, destructive confirm.
-  ///
-  /// The only saturated colour in the system, and it means *pay attention*.
-  /// Never use it for decoration, branding, or a happy state. If two things on
-  /// a screen are this colour, one of them is wrong.
-  static const Color statusAlert = Color(0xFFE07A2F);
+  /// Verified, authentic, signature valid.
+  static const Color statusOk = Color(0xFF5EE9A0);
+
+  /// Tampered, denied, destructive, degraded GPS.
+  static const Color statusAlert = Color(0xFFFF7BA0);
+
+  /// Caution, fallback key, unavailable service.
+  static const Color statusWarn = Color(0xFFF5E3B0);
+
+  // ---- Category identity. Never used to signal state. -----------------
+
+  static const Color tintInfo = Color(0xFFA78BFA);
+  static const Color tintCool = Color(0xFFC8E85A);
+
+  /// Unsorted, empty, nothing yet.
+  static const Color tintNull = Color(0xFFC4C4C4);
 
   // =====================================================================
   // Type
   // =====================================================================
 
-  /// Display and UI face. Weights 400 and 500 only.
+  /// Display and UI face. Variable; weights 400, 500, 700.
   static const String fontUi = 'SpaceGrotesk';
 
   /// Data face. Weight 400 only.
   static const String fontData = 'JetBrainsMono';
 
-  // Space Grotesk ships as a variable font; weight rides the `wght` axis.
   static const List<FontVariation> _wRegular = <FontVariation>[
     FontVariation('wght', 400)
   ];
   static const List<FontVariation> _wMedium = <FontVariation>[
     FontVariation('wght', 500)
   ];
+  static const List<FontVariation> _wBold = <FontVariation>[
+    FontVariation('wght', 700)
+  ];
 
-  /// 22 / 500 / UI / -0.01em.
+  /// 30 / 700 / UI / -0.02em.
+  static const TextStyle display = TextStyle(
+    fontFamily: fontUi,
+    fontVariations: _wBold,
+    fontWeight: FontWeight.w700,
+    fontSize: 30,
+    letterSpacing: -0.6,
+    color: textPrimary,
+    height: 1.1,
+  );
+
+  /// 22 / 700 / UI / -0.01em.
   static const TextStyle screenTitle = TextStyle(
     fontFamily: fontUi,
-    fontVariations: _wMedium,
-    fontWeight: FontWeight.w500,
+    fontVariations: _wBold,
+    fontWeight: FontWeight.w700,
     fontSize: 22,
     letterSpacing: -0.22,
     color: textPrimary,
     height: 1.2,
   );
 
-  /// 13 / 500 / UI / 0.06em. Always rendered uppercase.
-  static const TextStyle sectionHead = TextStyle(
+  /// 15 / 700 / UI.
+  static const TextStyle cardTitle = TextStyle(
     fontFamily: fontUi,
-    fontVariations: _wMedium,
-    fontWeight: FontWeight.w500,
-    fontSize: 13,
-    letterSpacing: 0.78,
-    color: textSecondary,
+    fontVariations: _wBold,
+    fontWeight: FontWeight.w700,
+    fontSize: 15,
+    color: textPrimary,
+    height: 1.25,
   );
 
   /// 15 / 400 / UI. Prose only.
@@ -117,8 +139,7 @@ class Tokens {
     height: 1.4,
   );
 
-  /// 11 / 400 / Data. Reserved for the stamp card's coordinate and time lines,
-  /// which `CLAUDE.md` specifies at 11px.
+  /// 11 / 400 / Data. The stamp card's coordinate and time lines.
   static const TextStyle dataStamp = TextStyle(
     fontFamily: fontData,
     fontSize: 11,
@@ -138,22 +159,47 @@ class Tokens {
   // Geometry
   // =====================================================================
 
-  /// Cards, inputs, and buttons. Never above 8.
-  static const double radiusControl = 6;
+  /// Cards and sheets.
+  static const double radiusCard = 16;
+
+  /// Buttons, inputs, icon tiles.
+  static const double radiusControl = 12;
 
   /// Full-bleed panels sit flush.
   static const double radiusFlush = 0;
 
+  static const BorderRadius brCard =
+      BorderRadius.all(Radius.circular(radiusCard));
   static const BorderRadius brControl =
       BorderRadius.all(Radius.circular(radiusControl));
 
-  static const double borderWidthHairline = 1;
+  /// Badges only.
+  static const BorderRadius brPill = BorderRadius.all(Radius.circular(999));
 
-  /// Left accent bars.
-  static const double borderWidthAccent = 3;
+  /// Every border.
+  static const double borderWidth = 2;
 
-  static const BorderSide sideHairline =
-      BorderSide(color: borderHairline, width: borderWidthHairline);
+  /// The shutter only.
+  static const double borderWidthThick = 3;
+
+  static const BorderSide sideOutline =
+      BorderSide(color: outline, width: borderWidth);
+
+  /// Hard offset shadow — zero blur, never coloured, never soft. The only
+  /// depth cue in the system.
+  static const double shadowOffset = 4;
+
+  static const List<BoxShadow> shadow = <BoxShadow>[
+    BoxShadow(
+      color: outline,
+      offset: Offset(shadowOffset, shadowOffset),
+      blurRadius: 0,
+    ),
+  ];
+
+  /// Pressed elements drop the shadow and translate by this much, so the press
+  /// reads as physical.
+  static const Offset pressShift = Offset(2, 2);
 
   // Spacing scale: 4, 8, 12, 16, 24, 32. Nothing between.
   static const double spaceHair = 4;
@@ -166,13 +212,16 @@ class Tokens {
   /// Minimum touch target. Field users wear gloves.
   static const double touchMin = 48;
 
-  /// Square control face (shutter, icon buttons). Sits inside [touchMin].
-  static const double controlSize = 44;
+  /// Icon tile — the visual anchor of every card.
+  static const double tileSize = 48;
 
-  /// Log-row and control-row thumbnail.
+  /// Shutter face.
+  static const double shutterSize = 64;
+
+  /// Control-row and log thumbnail.
   static const double thumbSize = 56;
 
-  /// Status mark / small inline icon box.
+  /// Status mark / numbered check bullet.
   static const double markSize = 24;
 
   /// Fixed label column in a [DataLine], so values align down the page.
@@ -183,6 +232,7 @@ class Tokens {
 
   static const double iconSmall = 14;
   static const double iconBase = 20;
+  static const double iconTile = 24;
 
   // =====================================================================
   // Motion
@@ -196,7 +246,7 @@ class Tokens {
 
   /// Honour the platform's reduced-motion setting.
   static Duration motion(BuildContext context, Duration d) =>
-      MediaQuery.maybeDisableAnimationsOf(context) ?? false
+      (MediaQuery.maybeDisableAnimationsOf(context) ?? false)
           ? Duration.zero
           : d;
 
@@ -206,10 +256,10 @@ class Tokens {
 
   static ThemeData theme() {
     const ColorScheme scheme = ColorScheme.light(
-      primary: actionPrimary,
-      onPrimary: textOnAction,
-      secondary: statusAlert,
-      surface: surfaceRaised,
+      primary: accent,
+      onPrimary: textPrimary,
+      secondary: statusOk,
+      surface: surface,
       onSurface: textPrimary,
       error: statusAlert,
     );
@@ -217,12 +267,12 @@ class Tokens {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: background,
+      scaffoldBackgroundColor: canvas,
       fontFamily: fontUi,
       splashFactory: InkRipple.splashFactory,
-      dividerColor: borderHairline,
+      dividerColor: outline,
       appBarTheme: const AppBarTheme(
-        backgroundColor: background,
+        backgroundColor: canvas,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -236,44 +286,9 @@ class Tokens {
         contentTextStyle: TextStyle(
           fontFamily: fontUi,
           fontSize: 15,
-          color: background,
+          color: canvas,
         ),
         shape: RoundedRectangleBorder(borderRadius: brControl),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: actionPrimary,
-          foregroundColor: textOnAction,
-          disabledBackgroundColor: surfaceInset,
-          disabledForegroundColor: textSecondary,
-          elevation: 0,
-          minimumSize: const Size(0, touchMin),
-          padding: const EdgeInsets.symmetric(
-              horizontal: spaceSection, vertical: spaceSnug),
-          shape: const RoundedRectangleBorder(borderRadius: brControl),
-          textStyle: const TextStyle(
-            fontFamily: fontUi,
-            fontVariations: _wMedium,
-            fontWeight: FontWeight.w500,
-            fontSize: 15,
-          ),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: actionPrimary,
-          side: sideHairline,
-          minimumSize: const Size(0, touchMin),
-          padding: const EdgeInsets.symmetric(
-              horizontal: spaceSection, vertical: spaceSnug),
-          shape: const RoundedRectangleBorder(borderRadius: brControl),
-          textStyle: const TextStyle(
-            fontFamily: fontUi,
-            fontVariations: _wMedium,
-            fontWeight: FontWeight.w500,
-            fontSize: 15,
-          ),
-        ),
       ),
       textTheme: const TextTheme(
         bodyMedium: body,

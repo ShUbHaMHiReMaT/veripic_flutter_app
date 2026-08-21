@@ -24,7 +24,7 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
     statusBarBrightness: Brightness.light,
-    systemNavigationBarColor: Tokens.background,
+    systemNavigationBarColor: Tokens.canvas,
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const VeriPicApp());

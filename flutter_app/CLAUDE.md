@@ -1,10 +1,14 @@
 # Geotag camera — design system
 
-Design direction: **Field kit**. The app is an instrument, not a social camera. It reads
-like a survey tool: legible in sunlight, data-forward, no decoration that isn't information.
+Design direction: **Bold paper**. Flat cream ground, heavy black outlines, hard offset
+shadows, saturated colour used as identity. Every surface reads like a physical card sitting
+on a desk: outlined, slightly raised, unambiguous. Nothing is subtle, nothing is glassy.
 
-Do not introduce new colors, radii, or fonts. If a component seems to need one, it means the
-component is wrong.
+The app is still an instrument — it must stay legible in sunlight and honest about data —
+but it states things loudly rather than quietly.
+
+Do not introduce new fonts. Do not introduce a colour outside the palette below, and do not
+invent a new radius. If a component seems to need one, the component is wrong.
 
 ---
 
@@ -14,47 +18,59 @@ component is wrong.
 
 | Token | Hex | Use |
 |---|---|---|
-| `sand` | `#F0EDE4` | App background |
-| `sand-deep` | `#E2DDCE` | Inset areas, viewfinder placeholder, disabled fills |
-| `rule` | `#C7C0AE` | Hairline borders, dividers |
-| `ink` | `#1E2A22` | Primary text |
-| `ink-soft` | `#5A6B5F` | Secondary text, all metadata |
-| `forest` | `#2F5D45` | Primary actions, shutter, active state |
-| `forest-deep` | `#1F3E2E` | Pressed state |
-| `signal` | `#E07A2F` | Live/recording, GPS degraded, destructive confirm |
-| `paper` | `#FFFFFF` | Cards that sit above sand |
+| `canvas` | `#FCF9F0` | App background |
+| `surface` | `#FFFFFF` | Cards, sheets, anything raised off the canvas |
+| `surface-inset` | `#F1EDE1` | Inset wells, viewfinder placeholder, disabled fills |
+| `outline` | `#000000` | Every border, every divider, every shadow |
+| `text` | `#000000` | Primary text |
+| `text-soft` | `#6B6B6B` | Secondary text and metadata |
+| `accent` | `#FFD84D` | Primary action — the shutter, the confirm button |
+| `accent-press` | `#E8C22F` | Pressed state for `accent` |
+| `ok` | `#5EE9A0` | Verified, authentic, signature valid |
+| `alert` | `#FF7BA0` | Tampered, denied, destructive, degraded GPS |
+| `warn` | `#F5E3B0` | Caution, fallback key, unavailable service |
+| `info` | `#A78BFA` | Neutral category identity |
+| `cool` | `#C8E85A` | Neutral category identity |
+| `null` | `#C4C4C4` | Unsorted, empty, nothing yet |
 
-`signal` is the only saturated color and it means *pay attention*. Never use it for
-decoration, branding, or a happy state. If two things on a screen are orange, one is wrong.
+Colour here is **identity**, not decoration — it tells you *which thing this is* or *what
+state it is in*. A card gets a colour because of what it holds, not to look lively. `ok`,
+`alert`, and `warn` are reserved for state and may never be used as category identity.
 
-No dark theme in v1. Field use is outdoors; a dark UI in sunlight is unreadable.
+No dark theme. Field use is outdoors; a dark UI in sunlight is unreadable.
 
 ### Type
 
-- Display / UI: **Space Grotesk** — weights 400 and 500 only
+Both faces are already bundled. **Space Grotesk** is variable (300–700); use the `wght`
+axis, never a faux-bold.
+
+- Display / UI: **Space Grotesk** — weights 400, 500, 700
 - Data: **JetBrains Mono** — weight 400 only
 
-Every number a user might verify goes in mono: coordinates, accuracy, timestamps, frame
-counts, altitude, bearing. Prose goes in Space Grotesk. This split is the core of the
-direction — a coordinate in a proportional font instantly looks untrustworthy.
+Every number a user might verify goes in mono: coordinates, accuracy, timestamps, hashes,
+counts, altitude. Prose goes in Space Grotesk. A coordinate in a proportional font instantly
+looks untrustworthy.
 
 | Role | Size | Weight | Family | Tracking |
 |---|---|---|---|---|
-| Screen title | 22 | 500 | Grotesk | -0.01em |
-| Section head | 13 | 500 | Grotesk | 0.06em, uppercase |
+| Display | 30 | 700 | Grotesk | -0.02em |
+| Screen title | 22 | 700 | Grotesk | -0.01em |
+| Card title | 15 | 700 | Grotesk | 0 |
 | Body | 15 | 400 | Grotesk | 0 |
 | Label | 12 | 500 | Grotesk | 0.02em |
 | Data | 12 | 400 | Mono | 0 |
 | Data small | 10 | 400 | Mono | 0.06em, uppercase |
 
-Uppercase is allowed here (unlike most systems) but only on section heads and status
-readouts — it's the instrument-panel vernacular. Never uppercase body text or buttons.
+Uppercase only on `data small` readouts and status badges. Never uppercase body or buttons.
 
 ### Geometry
 
-- Radius: `6px` on cards, inputs, and buttons. `0` on full-bleed panels. Never above 8px.
-- Borders: `1px solid rule`. On emphasis, `1px solid forest`.
-- Accent bars: `border-left: 3px` in `forest` or `signal`, with `border-radius: 0`.
+- Radius: `16px` on cards and sheets. `12px` on buttons, inputs, and icon tiles. Full round
+  on badges only. Never anything else.
+- Borders: `2px solid outline` everywhere. `3px` only on the shutter.
+- Shadow: `4px 4px 0 outline` — hard, zero blur, never coloured, never soft. This is the
+  only depth cue in the system. Pressed elements drop the shadow and translate `2px, 2px`
+  so the press feels physical.
 - Spacing scale: 4, 8, 12, 16, 24, 32. Nothing between.
 - Touch targets: minimum 48dp. Field users wear gloves.
 
@@ -62,36 +78,45 @@ readouts — it's the instrument-panel vernacular. Never uppercase body text or 
 
 ## Components
 
+### Icon tile
+A rounded square, `12px` radius, `2px` outline, filled with the item's identity colour, with
+a black glyph centred. 48dp. This is the visual anchor of every card.
+
+### Tab card
+The core unit. A `surface` card with a coloured tab protruding from its top-left edge, like a
+file folder. Card is `16px` radius, `2px` outline, `4px 4px 0` shadow. The tab is the same
+colour as the card's icon tile. Inside: icon tile top-left, count metadata top-right in mono,
+title bottom-left in card title. Tapping presses the whole card.
+
 ### Status readout
-Top of the viewfinder. Mono uppercase, 10px. Format: `FIX ±4M`. When accuracy is worse
-than 15 m or the fix is stale, the text turns `signal` and reads `FIX ±38M — WEAK`. Never
-hide this element; a camera that silently loses GPS is worse than one that says so.
+Top of the viewfinder. Mono uppercase, 10px, inside a `12px` outlined pill. Format `FIX ±4M`.
+When accuracy is worse than 15 m or the fix is stale it fills `alert` and reads
+`FIX ±38M — WEAK`. Never hide it; a camera that silently loses GPS is worse than one that
+says so.
 
 ### Stamp card
-Sits below the viewfinder. `border-left: 3px solid signal`, no other border, radius 0.
-Line 1: site name, uppercase, 12px Grotesk 500.
-Line 2: coordinates, mono 11px, `ink-soft`.
-Line 3: date and time, mono 11px, `ink-soft`. Format `21AUG26 09:14`.
+Sits below the viewfinder. `surface`, `2px` outline, `16px` radius, shadow, with a `12px`
+wide `accent` bar down its left inside edge.
+Line 1: site name, card title.
+Line 2: coordinates, mono 11px, `text-soft`.
+Line 3: date and time, mono 11px, `text-soft`. Format `21AUG26 09:14`.
 
 ### Shutter
-44dp square, radius 6, `forest` fill. Pressed state fills `forest-deep` and scales 0.96.
-Disabled (no GPS fix, no project) fills `sand-deep` with `ink-soft` — and tapping it shows
-an inline reason rather than doing nothing.
+64dp square, `12px` radius, `3px` outline, `accent` fill, `4px 4px 0` shadow. Pressed fills
+`accent-press`, drops the shadow, translates `2px, 2px`. Disabled fills `surface-inset` —
+and tapping it shows an inline reason rather than doing nothing.
 
-### Log row
-Thumbnail 56dp radius 6, hairline border. Site name as the primary line, mono metadata
-below. Grouped under uppercase mono date heads. Bordered rows, not floating cards.
+### Badge
+Full-round pill, `2px` outline, mono 10px uppercase, filled with a state colour. Used for
+`NEW`, `SEALED`, verdicts.
 
 ---
 
 ## Screens
 
-1. **Viewfinder** — status readout, camera feed, stamp card, control row. The stamp card
-   shows live values and is tappable to edit before capture.
-2. **Log** — reverse-chronological, grouped by day, bordered rows.
-3. **Map** — muted basemap, square pins in `forest`, `signal` for degraded-accuracy shots.
-4. **Project detail** — photo count, date range, export action.
-5. **Onboarding** — welcome, camera prime, location prime, first project, stamp template.
+1. **Home** — display headline, primary action row, then a two-column grid of tab cards.
+2. **Viewfinder** — status readout, camera feed, stamp card, control row.
+3. **Check** — picked frame, verdict card, numbered check list, findings, metadata drawer.
 
 ---
 
@@ -105,18 +130,19 @@ wrong, so treat it as a first-class subsystem, not a UI overlay.
 - Bundle JetBrains Mono as an asset and load it explicitly before compositing. Do not rely
   on a system fallback — the fallback will be proportional and the digits will not align.
 - Stamp font size is a **percentage of image height** (start at 2.2%), never a fixed px.
-- Draw a `rgba(240,237,228,0.92)` panel behind the text block. Text with a drop shadow
-  alone fails on bright sky and on dark shed interiors; a panel survives both.
+- Draw a `rgba(252,249,240,0.94)` panel behind the text block, with a solid `accent` bar down
+  its left edge. Text with a drop shadow alone fails on bright sky and on dark shed
+  interiors; a panel survives both.
 - Write GPS to EXIF as well as burning it in. The pixels are for humans, EXIF is for
   everything downstream.
-- Store the original unstamped frame alongside the stamped one. Users will eventually want
-  a different template on an old photo.
+- Store the original unstamped frame alongside the stamped one. Users will eventually want a
+  different template on an old photo.
 
 ---
 
 ## Copy rules
 
-- Sentence case on buttons and body. Uppercase only on mono status readouts and section heads.
+- Sentence case on buttons and body. Uppercase only on mono readouts and badges.
 - Verb-first buttons: "Allow location", "Export project". Never "OK" or "Submit".
 - Errors state what happened and the fix, in one sentence, no apology:
   "No GPS fix yet. Move away from the shed wall."
@@ -125,9 +151,10 @@ wrong, so treat it as a first-class subsystem, not a UI overlay.
 
 ---
 
-## Non-goals for v1
+## Non-goals
 
 - Dark theme
+- Gradients, blurs, glows, or soft shadows — depth is the hard offset shadow, nothing else
 - Filters or beautification
 - Accounts or sign-in before first capture
-- Any mascot or illustration inside the viewfinder, log, or map
+- Any mascot or illustration inside the viewfinder or the check report

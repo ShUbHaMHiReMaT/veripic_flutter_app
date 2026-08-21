@@ -10,46 +10,62 @@ import 'verify_screen.dart';
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
+  void _open(BuildContext context, Widget screen) {
+    HapticFeedback.mediumImpact();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceSection, Tokens.spaceBase, Tokens.spaceScreen),
+          padding: const EdgeInsets.fromLTRB(
+            Tokens.spaceBase,
+            Tokens.spaceSection,
+            Tokens.spaceBase,
+            Tokens.spaceScreen,
+          ),
           children: <Widget>[
-            const Text('VeriPic', style: Tokens.screenTitle),
-            const SizedBox(height: Tokens.spaceHair),
-            const Text(
-              'Every frame is stamped, signed, and checkable.',
-              style: Tokens.body,
+            const Text('Capture now.\nVerify anytime.', style: Tokens.display),
+            const SizedBox(height: Tokens.spaceSection),
+            ActionButton(
+              label: 'Open viewfinder',
+              icon: Icons.photo_camera_outlined,
+              onPressed: () => _open(context, const CameraScreen()),
             ),
-            const SizedBox(height: Tokens.spaceScreen),
-            const SectionHead(title: 'Capture'),
+            const SizedBox(height: Tokens.spaceSection),
+            const SectionHead(title: 'Tools'),
             const SizedBox(height: Tokens.spaceSnug),
-            LogRow(
-              title: 'Open viewfinder',
-              lines: const <String>['STAMP + SIGN + LOG'],
-              onTap: () {
-                HapticFeedback.mediumImpact();
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const CameraScreen()),
-                );
-              },
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Expanded(
+                    child: TabCard(
+                      icon: Icons.center_focus_strong_outlined,
+                      tint: Tokens.statusOk,
+                      title: 'Viewfinder',
+                      meta: const <String>['stamp + sign'],
+                      onTap: () => _open(context, const CameraScreen()),
+                    ),
+                  ),
+                  const SizedBox(width: Tokens.spaceSnug),
+                  Expanded(
+                    child: TabCard(
+                      icon: Icons.fact_check_outlined,
+                      tint: Tokens.tintInfo,
+                      title: 'Check a frame',
+                      meta: const <String>['4 checks'],
+                      onTap: () => _open(context, const VerifyScreen()),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: Tokens.spaceTight),
-            LogRow(
-              title: 'Check a frame',
-              lines: const <String>['PAYLOAD + HMAC + DRIFT + AI'],
-              onTap: () {
-                HapticFeedback.mediumImpact();
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const VerifyScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: Tokens.spaceScreen),
+            const SizedBox(height: Tokens.spaceSection),
             const SectionHead(title: 'This device'),
             const SizedBox(height: Tokens.spaceSnug),
             const _DeviceCard(),
@@ -87,54 +103,57 @@ class _DeviceCardState extends State<_DeviceCard> {
     return FutureBuilder<_Identity>(
       future: _future,
       builder: (BuildContext context, AsyncSnapshot<_Identity> snap) {
-        final _Identity? id = snap.data;
-
         if (snap.hasError) {
-          return const AccentPanel(
-            accent: Tokens.statusAlert,
-            child: Text(
-              'Device identity could not be read. Restart the app to retry.',
-              style: Tokens.body,
-            ),
+          return const ErrorState(
+            message: 'Device identity could not be read. Restart the app to '
+                'try again.',
           );
         }
 
+        final _Identity? id = snap.data;
         if (id == null) {
-          return const FieldCard(
-            child: Text('Reading hardware identity', style: Tokens.body),
-          );
+          return const LoadingState(message: 'Reading hardware identity');
         }
 
         final bool fallback = id.fingerprint.usedFallback;
 
         return FieldCard(
-          padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceBase, Tokens.spaceBase, Tokens.spaceTight),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Expanded(
-                    child: Text(id.fingerprint.label.toUpperCase(),
-                        style: Tokens.label.copyWith(color: Tokens.textPrimary)),
+                  IconTile(
+                    icon:
+                        fallback ? Icons.key_off_outlined : Icons.key_outlined,
+                    color: fallback ? Tokens.statusWarn : Tokens.statusOk,
                   ),
-                  StatusText(
-                    text: fallback ? 'KEY FALLBACK' : 'KEY BOUND',
-                    color: fallback ? Tokens.statusAlert : Tokens.actionPrimary,
+                  const SizedBox(width: Tokens.spaceSnug),
+                  Expanded(
+                    child: Text(
+                      id.fingerprint.label,
+                      style: Tokens.cardTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  StatusBadge(
+                    label: fallback ? 'fallback' : 'bound',
+                    color: fallback ? Tokens.statusWarn : Tokens.statusOk,
                   ),
                 ],
               ),
-              const SizedBox(height: Tokens.spaceSnug),
+              const SizedBox(height: Tokens.spaceBase),
               DataLine(label: 'Device', value: id.fingerprint.shortId),
               DataLine(
                 label: 'Signing key',
                 value: id.keys['Active key id'] ?? '—',
               ),
               if (fallback) ...<Widget>[
-                const SizedBox(height: Tokens.spaceTight),
+                const SizedBox(height: Tokens.spaceSnug),
                 const AccentPanel(
-                  accent: Tokens.statusAlert,
-                  background: Tokens.background,
+                  accent: Tokens.statusWarn,
+                  background: Tokens.canvas,
                   child: Text(
                     'No hardware identifier available, so the key is bound to a '
                     'stored fallback. Frames signed here stay valid on this '
@@ -144,45 +163,34 @@ class _DeviceCardState extends State<_DeviceCard> {
                 ),
               ],
               AnimatedCrossFade(
-                duration: const Duration(milliseconds: 180),
+                duration: Tokens.motion(context, Tokens.motionBase),
                 crossFadeState: _expanded
                     ? CrossFadeState.showSecond
                     : CrossFadeState.showFirst,
                 firstChild: const SizedBox(width: double.infinity),
                 secondChild: Padding(
-                  padding: const EdgeInsets.only(top: Tokens.spaceTight),
+                  padding: const EdgeInsets.only(top: Tokens.spaceSnug),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      const Divider(height: Tokens.spaceBase, color: Tokens.borderHairline),
                       for (final MapEntry<String, String> e
                           in id.fingerprint.attributes.entries)
                         DataLine(label: e.key, value: e.value),
-                      const Divider(height: Tokens.spaceBase, color: Tokens.borderHairline),
                       for (final MapEntry<String, String> e in id.keys.entries)
                         DataLine(label: e.key, value: e.value),
                     ],
                   ),
                 ),
               ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () {
-                    HapticFeedback.selectionClick();
-                    setState(() => _expanded = !_expanded);
-                  },
-                  style: TextButton.styleFrom(
-                    foregroundColor: Tokens.actionPrimary,
-                    padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceHair),
-                    minimumSize: const Size(0, Tokens.touchMin),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    _expanded ? 'Hide details' : 'Show details',
-                    style: Tokens.label.copyWith(color: Tokens.actionPrimary),
-                  ),
-                ),
+              const SizedBox(height: Tokens.spaceSnug),
+              ActionButton(
+                label: _expanded ? 'Hide details' : 'Show details',
+                color: Tokens.surfaceInset,
+                expand: false,
+                onPressed: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _expanded = !_expanded);
+                },
               ),
             ],
           ),
