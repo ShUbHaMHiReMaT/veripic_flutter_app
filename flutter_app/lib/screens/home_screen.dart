@@ -19,6 +19,7 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Scaffold(
       body: SafeArea(
         child: ListView(
@@ -29,7 +30,7 @@ class HomeScreen extends StatelessWidget {
             Tokens.spaceScreen,
           ),
           children: <Widget>[
-            const Text('Capture now.\nVerify anytime.', style: Tokens.display),
+            Text('Capture now.\nVerify anytime.', style: p.display),
             const SizedBox(height: Tokens.spaceSection),
             ActionButton(
               label: 'Open viewfinder',
@@ -100,6 +101,7 @@ class _DeviceCardState extends State<_DeviceCard> {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return FutureBuilder<_Identity>(
       future: _future,
       builder: (BuildContext context, AsyncSnapshot<_Identity> snap) {
@@ -132,7 +134,7 @@ class _DeviceCardState extends State<_DeviceCard> {
                   Expanded(
                     child: Text(
                       id.fingerprint.label,
-                      style: Tokens.cardTitle,
+                      style: p.cardTitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -151,14 +153,14 @@ class _DeviceCardState extends State<_DeviceCard> {
               ),
               if (fallback) ...<Widget>[
                 const SizedBox(height: Tokens.spaceSnug),
-                const AccentPanel(
+                AccentPanel(
                   accent: Tokens.statusWarn,
-                  background: Tokens.canvas,
+                  background: p.canvas,
                   child: Text(
                     'No hardware identifier available, so the key is bound to a '
                     'stored fallback. Frames signed here stay valid on this '
                     'install only.',
-                    style: Tokens.body,
+                    style: p.body,
                   ),
                 ),
               ],
@@ -185,7 +187,7 @@ class _DeviceCardState extends State<_DeviceCard> {
               const SizedBox(height: Tokens.spaceSnug),
               ActionButton(
                 label: _expanded ? 'Hide details' : 'Show details',
-                color: Tokens.surfaceInset,
+                color: p.surfaceInset,
                 expand: false,
                 onPressed: () {
                   HapticFeedback.selectionClick();

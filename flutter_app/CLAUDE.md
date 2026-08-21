@@ -37,7 +37,28 @@ Colour here is **identity**, not decoration — it tells you *which thing this i
 state it is in*. A card gets a colour because of what it holds, not to look lively. `ok`,
 `alert`, and `warn` are reserved for state and may never be used as category identity.
 
-No dark theme. Field use is outdoors; a dark UI in sunlight is unreadable.
+### Dark theme
+
+Both themes ship, and the app follows the system setting. Dark is **not** an inversion —
+the ink-on-paper relationship is preserved, so the outline stays the darkest thing on a
+light card and becomes the lightest thing on a dark one.
+
+| Token | Light | Dark |
+|---|---|---|
+| `canvas` | `#FCF9F0` | `#15130F` |
+| `surface` | `#FFFFFF` | `#23201A` |
+| `surface-inset` | `#F1EDE1` | `#2E2A22` |
+| `outline` | `#000000` | `#000000` |
+| `text` | `#000000` | `#F5F1E6` |
+| `text-soft` | `#6B6B6B` | `#A39C8C` |
+| `shadow` | `#000000` | `#000000` |
+
+Identity and state colours (`accent`, `ok`, `alert`, `warn`, `info`, `cool`, `null`) do not
+change between themes — they are the same pigment on a different paper, and their glyphs
+stay black in both because every one of them is a light pigment.
+
+Sunlight legibility is why light remains the default when the system expresses no
+preference.
 
 ### Type
 
@@ -116,7 +137,10 @@ Full-round pill, `2px` outline, mono 10px uppercase, filled with a state colour.
 
 1. **Home** — display headline, primary action row, then a two-column grid of tab cards.
 2. **Viewfinder** — status readout, camera feed, stamp card, control row.
-3. **Check** — picked frame, verdict card, numbered check list, findings, metadata drawer.
+3. **Frames** — a scrollable grid of frames captured by this app, newest first. Only frames
+   this app signed appear here; it is never the device's camera roll. Each cell is an
+   outlined thumbnail with a mono capture time. Empty until the first capture.
+4. **Check** — picked frame, verdict card, numbered check list, findings, metadata drawer.
 
 ---
 
@@ -153,7 +177,6 @@ wrong, so treat it as a first-class subsystem, not a UI overlay.
 
 ## Non-goals
 
-- Dark theme
 - Gradients, blurs, glows, or soft shadows — depth is the hard offset shadow, nothing else
 - Filters or beautification
 - Accounts or sign-in before first capture

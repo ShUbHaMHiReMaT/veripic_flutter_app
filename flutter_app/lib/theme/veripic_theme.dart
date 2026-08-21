@@ -48,6 +48,7 @@ class _PressCardState extends State<PressCard> {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     final bool down = _pressed && _live;
 
     final Widget card = AnimatedContainer(
@@ -59,10 +60,10 @@ class _PressCardState extends State<PressCard> {
       ),
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: widget.color ?? Tokens.surface,
+        color: widget.color ?? p.surface,
         borderRadius: widget.borderRadius,
-        border: Border.all(color: Tokens.outline, width: Tokens.borderWidth),
-        boxShadow: widget.shadow && !down ? Tokens.shadow : null,
+        border: Border.all(color: p.outline, width: Tokens.borderWidth),
+        boxShadow: widget.shadow && !down ? p.shadow : null,
       ),
       child: widget.child,
     );
@@ -118,15 +119,16 @@ class IconTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         color: color,
         borderRadius: Tokens.brControl,
-        border: Border.all(color: Tokens.outline, width: Tokens.borderWidth),
+        border: Border.all(color: p.outline, width: Tokens.borderWidth),
       ),
-      child: Icon(icon, size: Tokens.iconTile, color: Tokens.textPrimary),
+      child: Icon(icon, size: Tokens.iconTile, color: Tokens.onIdentity),
     );
   }
 }
@@ -148,6 +150,7 @@ class StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: Tokens.spaceTight,
@@ -156,11 +159,11 @@ class StatusBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: color,
         borderRadius: Tokens.brPill,
-        border: Border.all(color: Tokens.outline, width: Tokens.borderWidth),
+        border: Border.all(color: p.outline, width: Tokens.borderWidth),
       ),
       child: Text(
         label.toUpperCase(),
-        style: Tokens.dataSmall.copyWith(color: Tokens.textPrimary),
+        style: Tokens.dataSmall.copyWith(color: Tokens.onIdentity),
       ),
     );
   }
@@ -194,6 +197,7 @@ class TabCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -210,7 +214,7 @@ class TabCard extends StatelessWidget {
                 top: Radius.circular(Tokens.radiusControl),
               ),
               border: Border.all(
-                color: Tokens.outline,
+                color: p.outline,
                 width: Tokens.borderWidth,
               ),
             ),
@@ -235,7 +239,7 @@ class TabCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: <Widget>[
                           for (final String m in meta)
-                            Text(m, style: Tokens.dataSmall),
+                            Text(m, style: p.dataSmall),
                         ],
                       ),
                     ),
@@ -247,7 +251,7 @@ class TabCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title,
-                        style: Tokens.cardTitle,
+                        style: p.cardTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -285,17 +289,18 @@ class ActionButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final IconData? icon;
-  final Color color;
+  final Color? color;
   final bool expand;
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     final bool enabled = onPressed != null;
-    final Color ink = enabled ? Tokens.textPrimary : Tokens.textSecondary;
+    final Color ink = enabled ? p.textPrimary : p.textSecondary;
 
     return PressCard(
       onTap: onPressed,
-      color: enabled ? color : Tokens.surfaceInset,
+      color: enabled ? (color ?? Tokens.accent) : p.surfaceInset,
       borderRadius: Tokens.brControl,
       semanticLabel: label,
       padding: const EdgeInsets.symmetric(
@@ -310,7 +315,7 @@ class ActionButton extends StatelessWidget {
             Icon(icon, size: Tokens.iconBase, color: ink),
             const SizedBox(width: Tokens.spaceTight),
           ],
-          Text(label, style: Tokens.cardTitle.copyWith(color: ink)),
+          Text(label, style: p.cardTitle.copyWith(color: ink)),
         ],
       ),
     );
@@ -324,26 +329,27 @@ class IconButtonTile extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     required this.semanticLabel,
-    this.color = Tokens.surface,
+    this.color,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String semanticLabel;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return SizedBox(
       width: Tokens.touchMin,
       height: Tokens.touchMin,
       child: PressCard(
         onTap: onPressed,
-        color: color,
+        color: color ?? p.surface,
         borderRadius: Tokens.brControl,
         semanticLabel: semanticLabel,
         padding: EdgeInsets.zero,
-        child: Icon(icon, size: Tokens.iconBase, color: Tokens.textPrimary),
+        child: Icon(icon, size: Tokens.iconBase, color: p.textPrimary),
       ),
     );
   }
@@ -362,11 +368,12 @@ class SectionHead extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Semantics(
       header: true,
       child: Row(
         children: <Widget>[
-          Expanded(child: Text(title, style: Tokens.cardTitle)),
+          Expanded(child: Text(title, style: p.cardTitle)),
           if (trailing != null) trailing!,
         ],
       ),
@@ -399,19 +406,20 @@ class AccentPanel extends StatelessWidget {
     super.key,
     required this.child,
     this.accent = Tokens.accent,
-    this.background = Tokens.surface,
+    this.background,
     this.padding = const EdgeInsets.all(Tokens.spaceSnug),
   });
 
   final Widget child;
   final Color accent;
-  final Color background;
+  final Color? background;
   final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return PressCard(
-      color: background,
+      color: background ?? p.surface,
       padding: EdgeInsets.zero,
       child: IntrinsicHeight(
         child: Row(
@@ -421,7 +429,7 @@ class AccentPanel extends StatelessWidget {
               width: Tokens.spaceSnug,
               decoration: BoxDecoration(
                 color: accent,
-                border: const Border(right: Tokens.sideOutline),
+                border: Border(right: p.side),
               ),
             ),
             Expanded(child: Padding(padding: padding, child: child)),
@@ -437,17 +445,18 @@ class StatusText extends StatelessWidget {
   const StatusText({
     super.key,
     required this.text,
-    this.color = Tokens.surface,
+    this.color,
   });
 
   final String text;
 
-  /// Fill colour. State colours signal; [Tokens.surface] is the resting look.
-  final Color color;
+  /// Fill colour. State colours signal; surface is the resting look.
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return StatusBadge(label: text, color: color);
+    final Palette p = Palette.of(context);
+    return StatusBadge(label: text, color: color ?? p.surface);
   }
 }
 
@@ -486,6 +495,7 @@ class _DataLineState extends State<DataLine> {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Tokens.spaceHair),
       child: Row(
@@ -493,12 +503,12 @@ class _DataLineState extends State<DataLine> {
         children: <Widget>[
           SizedBox(
             width: widget.labelWidth,
-            child: Text(widget.label, style: Tokens.label),
+            child: Text(widget.label, style: p.label),
           ),
           Expanded(
             child: SelectableText(
               widget.value,
-              style: Tokens.data.copyWith(color: widget.valueColor),
+              style: p.data.copyWith(color: widget.valueColor),
             ),
           ),
           if (widget.copyable)
@@ -513,7 +523,7 @@ class _DataLineState extends State<DataLine> {
                   child: Icon(
                     _copied ? Icons.check : Icons.copy_outlined,
                     size: Tokens.iconSmall,
-                    color: Tokens.textPrimary,
+                    color: p.textPrimary,
                   ),
                 ),
               ),
@@ -545,6 +555,7 @@ class LogRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return PressCard(
       onTap: onTap,
       padding: const EdgeInsets.all(Tokens.spaceSnug),
@@ -556,10 +567,10 @@ class LogRow extends StatelessWidget {
               width: Tokens.thumbSize,
               height: Tokens.thumbSize,
               decoration: BoxDecoration(
-                color: Tokens.surfaceInset,
+                color: p.surfaceInset,
                 borderRadius: Tokens.brControl,
                 border: Border.all(
-                  color: Tokens.outline,
+                  color: p.outline,
                   width: Tokens.borderWidth,
                 ),
               ),
@@ -574,19 +585,19 @@ class LogRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(title, style: Tokens.cardTitle),
+                Text(title, style: p.cardTitle),
                 for (final String l in lines) ...<Widget>[
                   const SizedBox(height: Tokens.spaceHair),
-                  Text(l, style: Tokens.dataSmall),
+                  Text(l, style: p.dataSmall),
                 ],
               ],
             ),
           ),
           if (onTap != null)
-            const Icon(
+            Icon(
               Icons.chevron_right,
               size: Tokens.iconBase,
-              color: Tokens.textPrimary,
+              color: p.textPrimary,
             ),
         ],
       ),
@@ -616,6 +627,7 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Padding(
       padding: const EdgeInsets.all(Tokens.spaceBase),
       child: Column(
@@ -624,9 +636,9 @@ class EmptyState extends StatelessWidget {
         children: <Widget>[
           IconTile(icon: icon, color: Tokens.tintNull),
           const SizedBox(height: Tokens.spaceBase),
-          Text(title, style: Tokens.screenTitle),
+          Text(title, style: p.screenTitle),
           const SizedBox(height: Tokens.spaceTight),
-          Text(message, style: Tokens.body),
+          Text(message, style: p.body),
           if (actionLabel != null) ...<Widget>[
             const SizedBox(height: Tokens.spaceSection),
             ActionButton(
@@ -648,22 +660,23 @@ class LoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Semantics(
       liveRegion: true,
       label: message,
       child: FieldCard(
         child: Row(
           children: <Widget>[
-            const SizedBox(
+            SizedBox(
               width: Tokens.iconBase,
               height: Tokens.iconBase,
               child: CircularProgressIndicator(
                 strokeWidth: Tokens.borderWidth,
-                color: Tokens.textPrimary,
+                color: p.textPrimary,
               ),
             ),
             const SizedBox(width: Tokens.spaceSnug),
-            Expanded(child: Text(message, style: Tokens.body)),
+            Expanded(child: Text(message, style: p.body)),
           ],
         ),
       ),
@@ -685,6 +698,7 @@ class ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
     return Semantics(
       liveRegion: true,
       child: Column(
@@ -693,7 +707,7 @@ class ErrorState extends StatelessWidget {
         children: <Widget>[
           AccentPanel(
             accent: Tokens.statusAlert,
-            child: Text(message, style: Tokens.body),
+            child: Text(message, style: p.body),
           ),
           if (actionLabel != null) ...<Widget>[
             const SizedBox(height: Tokens.spaceBase),

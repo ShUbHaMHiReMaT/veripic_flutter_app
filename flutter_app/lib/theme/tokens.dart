@@ -1,43 +1,124 @@
 import 'package:flutter/material.dart';
 
+/// Colours that differ between light and dark.
+///
+/// Resolved from context via [Palette.of] so a theme switch is a rebuild, not a
+/// restart. Identity and state colours live on [Tokens] because they are the
+/// same pigment on either paper.
+@immutable
+class Palette extends ThemeExtension<Palette> {
+  const Palette({
+    required this.canvas,
+    required this.surface,
+    required this.surfaceInset,
+    required this.outline,
+    required this.textPrimary,
+    required this.textSecondary,
+  });
+
+  final Color canvas;
+  final Color surface;
+  final Color surfaceInset;
+  final Color outline;
+  final Color textPrimary;
+  final Color textSecondary;
+
+  static const Palette light = Palette(
+    canvas: Color(0xFFFCF9F0),
+    surface: Color(0xFFFFFFFF),
+    surfaceInset: Color(0xFFF1EDE1),
+    outline: Color(0xFF000000),
+    textPrimary: Color(0xFF000000),
+    textSecondary: Color(0xFF6B6B6B),
+  );
+
+  /// Not an inversion: the ink-on-paper relationship is preserved, so the
+  /// outline stays black on both papers.
+  static const Palette dark = Palette(
+    canvas: Color(0xFF15130F),
+    surface: Color(0xFF23201A),
+    surfaceInset: Color(0xFF2E2A22),
+    outline: Color(0xFF000000),
+    textPrimary: Color(0xFFF5F1E6),
+    textSecondary: Color(0xFFA39C8C),
+  );
+
+  static Palette of(BuildContext context) =>
+      Theme.of(context).extension<Palette>() ?? light;
+
+  // ---- Coloured type, so use sites stay short -------------------------
+
+  TextStyle get display => Tokens.display.copyWith(color: textPrimary);
+  TextStyle get screenTitle => Tokens.screenTitle.copyWith(color: textPrimary);
+  TextStyle get cardTitle => Tokens.cardTitle.copyWith(color: textPrimary);
+  TextStyle get body => Tokens.body.copyWith(color: textPrimary);
+  TextStyle get label => Tokens.label.copyWith(color: textSecondary);
+  TextStyle get data => Tokens.data.copyWith(color: textPrimary);
+  TextStyle get dataStamp => Tokens.dataStamp.copyWith(color: textSecondary);
+  TextStyle get dataSmall => Tokens.dataSmall.copyWith(color: textSecondary);
+
+  /// Hard offset shadow — zero blur, never coloured, never soft. The only
+  /// depth cue in the system.
+  List<BoxShadow> get shadow => <BoxShadow>[
+        BoxShadow(
+          color: outline,
+          offset: const Offset(Tokens.shadowOffset, Tokens.shadowOffset),
+          blurRadius: 0,
+        ),
+      ];
+
+  BorderSide get side =>
+      BorderSide(color: outline, width: Tokens.borderWidth);
+
+  @override
+  Palette copyWith({
+    Color? canvas,
+    Color? surface,
+    Color? surfaceInset,
+    Color? outline,
+    Color? textPrimary,
+    Color? textSecondary,
+  }) =>
+      Palette(
+        canvas: canvas ?? this.canvas,
+        surface: surface ?? this.surface,
+        surfaceInset: surfaceInset ?? this.surfaceInset,
+        outline: outline ?? this.outline,
+        textPrimary: textPrimary ?? this.textPrimary,
+        textSecondary: textSecondary ?? this.textSecondary,
+      );
+
+  @override
+  Palette lerp(ThemeExtension<Palette>? other, double t) {
+    if (other is! Palette) return this;
+    return Palette(
+      canvas: Color.lerp(canvas, other.canvas, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceInset: Color.lerp(surfaceInset, other.surfaceInset, t)!,
+      outline: Color.lerp(outline, other.outline, t)!,
+      textPrimary: Color.lerp(textPrimary, other.textPrimary, t)!,
+      textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
+    );
+  }
+}
+
 /// The token layer — the only place in the codebase where a raw colour, size,
 /// font name, radius, shadow, or duration is allowed to appear.
 ///
-/// Names describe the *role* a value plays, never what it looks like, so a
-/// palette change never invalidates a name. Derived from `CLAUDE.md`; do not
-/// add a token the design system does not sanction.
+/// Names describe the *role* a value plays, never what it looks like. Derived
+/// from `CLAUDE.md`; do not add a token the design system does not sanction.
 class Tokens {
   Tokens._();
 
   // =====================================================================
-  // Colour
+  // Identity and state colour — identical in both themes
   // =====================================================================
-
-  /// App background.
-  static const Color canvas = Color(0xFFFCF9F0);
-
-  /// Cards, sheets, anything raised off the canvas.
-  static const Color surface = Color(0xFFFFFFFF);
-
-  /// Inset wells, viewfinder placeholder, disabled fills.
-  static const Color surfaceInset = Color(0xFFF1EDE1);
-
-  /// Every border, every divider, every shadow.
-  static const Color outline = Color(0xFF000000);
-
-  /// Primary text.
-  static const Color textPrimary = Color(0xFF000000);
-
-  /// Secondary text and metadata.
-  static const Color textSecondary = Color(0xFF6B6B6B);
 
   /// Primary action — shutter, confirm.
   static const Color accent = Color(0xFFFFD84D);
 
   /// Pressed state for [accent].
   static const Color accentPressed = Color(0xFFE8C22F);
-
-  // ---- State. Reserved for state; never used as category identity. ----
 
   /// Verified, authentic, signature valid.
   static const Color statusOk = Color(0xFF5EE9A0);
@@ -48,16 +129,18 @@ class Tokens {
   /// Caution, fallback key, unavailable service.
   static const Color statusWarn = Color(0xFFF5E3B0);
 
-  // ---- Category identity. Never used to signal state. -----------------
-
   static const Color tintInfo = Color(0xFFA78BFA);
   static const Color tintCool = Color(0xFFC8E85A);
 
   /// Unsorted, empty, nothing yet.
   static const Color tintNull = Color(0xFFC4C4C4);
 
+  /// Every identity colour above is a light pigment, so glyphs sitting on one
+  /// are always black — in both themes.
+  static const Color onIdentity = Color(0xFF000000);
+
   // =====================================================================
-  // Type
+  // Type — colourless; colour comes from [Palette]
   // =====================================================================
 
   /// Display and UI face. Variable; weights 400, 500, 700.
@@ -83,7 +166,6 @@ class Tokens {
     fontWeight: FontWeight.w700,
     fontSize: 30,
     letterSpacing: -0.6,
-    color: textPrimary,
     height: 1.1,
   );
 
@@ -94,7 +176,6 @@ class Tokens {
     fontWeight: FontWeight.w700,
     fontSize: 22,
     letterSpacing: -0.22,
-    color: textPrimary,
     height: 1.2,
   );
 
@@ -104,7 +185,6 @@ class Tokens {
     fontVariations: _wBold,
     fontWeight: FontWeight.w700,
     fontSize: 15,
-    color: textPrimary,
     height: 1.25,
   );
 
@@ -114,7 +194,6 @@ class Tokens {
     fontVariations: _wRegular,
     fontWeight: FontWeight.w400,
     fontSize: 15,
-    color: textPrimary,
     height: 1.45,
   );
 
@@ -125,7 +204,6 @@ class Tokens {
     fontWeight: FontWeight.w500,
     fontSize: 12,
     letterSpacing: 0.24,
-    color: textSecondary,
   );
 
   /// 12 / 400 / Data.
@@ -135,7 +213,6 @@ class Tokens {
   static const TextStyle data = TextStyle(
     fontFamily: fontData,
     fontSize: 12,
-    color: textPrimary,
     height: 1.4,
   );
 
@@ -143,7 +220,6 @@ class Tokens {
   static const TextStyle dataStamp = TextStyle(
     fontFamily: fontData,
     fontSize: 11,
-    color: textSecondary,
     height: 1.4,
   );
 
@@ -152,7 +228,6 @@ class Tokens {
     fontFamily: fontData,
     fontSize: 10,
     letterSpacing: 0.6,
-    color: textSecondary,
   );
 
   // =====================================================================
@@ -182,20 +257,7 @@ class Tokens {
   /// The shutter only.
   static const double borderWidthThick = 3;
 
-  static const BorderSide sideOutline =
-      BorderSide(color: outline, width: borderWidth);
-
-  /// Hard offset shadow — zero blur, never coloured, never soft. The only
-  /// depth cue in the system.
   static const double shadowOffset = 4;
-
-  static const List<BoxShadow> shadow = <BoxShadow>[
-    BoxShadow(
-      color: outline,
-      offset: Offset(shadowOffset, shadowOffset),
-      blurRadius: 0,
-    ),
-  ];
 
   /// Pressed elements drop the shadow and translate by this much, so the press
   /// reads as physical.
@@ -221,10 +283,10 @@ class Tokens {
   /// Control-row and log thumbnail.
   static const double thumbSize = 56;
 
-  /// Status mark / numbered check bullet.
+  /// Numbered check bullet.
   static const double markSize = 24;
 
-  /// Fixed label column in a [DataLine], so values align down the page.
+  /// Fixed label column in a DataLine, so values align down the page.
   static const double labelColumnWidth = 104;
 
   /// Upper bound for pinch-zoom on a reviewed frame.
@@ -251,49 +313,53 @@ class Tokens {
           : d;
 
   // =====================================================================
-  // Theme
+  // Themes
   // =====================================================================
 
-  static ThemeData theme() {
-    const ColorScheme scheme = ColorScheme.light(
-      primary: accent,
-      onPrimary: textPrimary,
-      secondary: statusOk,
-      surface: surface,
-      onSurface: textPrimary,
-      error: statusAlert,
-    );
+  static ThemeData light() => _build(Palette.light, Brightness.light);
+  static ThemeData dark() => _build(Palette.dark, Brightness.dark);
 
+  static ThemeData _build(Palette p, Brightness brightness) {
     return ThemeData(
       useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: canvas,
+      brightness: brightness,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: accent,
+        brightness: brightness,
+      ).copyWith(
+        primary: accent,
+        onPrimary: onIdentity,
+        secondary: statusOk,
+        surface: p.surface,
+        onSurface: p.textPrimary,
+        error: statusAlert,
+      ),
+      extensions: <ThemeExtension<dynamic>>[p],
+      scaffoldBackgroundColor: p.canvas,
       fontFamily: fontUi,
       splashFactory: InkRipple.splashFactory,
-      dividerColor: outline,
-      appBarTheme: const AppBarTheme(
-        backgroundColor: canvas,
+      dividerColor: p.outline,
+      appBarTheme: AppBarTheme(
+        backgroundColor: p.canvas,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
-        titleTextStyle: screenTitle,
-        iconTheme: IconThemeData(color: textPrimary),
+        titleTextStyle: screenTitle.copyWith(color: p.textPrimary),
+        iconTheme: IconThemeData(color: p.textPrimary),
       ),
-      snackBarTheme: const SnackBarThemeData(
+      snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: textPrimary,
-        contentTextStyle: TextStyle(
-          fontFamily: fontUi,
-          fontSize: 15,
-          color: canvas,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: brControl),
+        backgroundColor: p.textPrimary,
+        contentTextStyle: body.copyWith(color: p.canvas),
+        shape: const RoundedRectangleBorder(borderRadius: brControl),
       ),
-      textTheme: const TextTheme(
-        bodyMedium: body,
-        bodySmall: label,
-        titleMedium: screenTitle,
+      // Material seeds DefaultTextStyle from bodyMedium, so colourless styles
+      // passed to Text inherit the right ink for the active theme.
+      textTheme: TextTheme(
+        bodyMedium: body.copyWith(color: p.textPrimary),
+        bodySmall: label.copyWith(color: p.textSecondary),
+        titleMedium: screenTitle.copyWith(color: p.textPrimary),
       ),
     );
   }

@@ -10,8 +10,8 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../main.dart' show cameras;
 import '../services/camera_service.dart';
-import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
+import 'frames_screen.dart';
 
 /// Accuracy worse than this reads as a weak fix in the status readout.
 const double _weakFixMetres = 15;
@@ -49,21 +49,17 @@ class _CameraScreenState extends State<CameraScreen>
   Position? _siteResolvedAt;
   bool _resolvingSite = false;
 
-  /// Shown when the shutter is tapped while it is disabled — a camera that
-  /// silently refuses is worse than one that says why.
+  /// Shown when the shutter is tapped while disabled — a camera that silently
+  /// refuses is worse than one that says why.
   String? _blockedReason;
   Timer? _blockedTimer;
 
-  /// Most recent capture — backs the thumbnail in the control row.
+  /// Thumbnail of the most recent capture, for the frames button.
   Uint8List? _lastThumb;
-  SignedEnvelope? _lastEnvelope;
+  int _sessionCount = 0;
 
   // Tap-to-focus reticle.
   Offset? _focusPoint;
-  late final AnimationController _reticle = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 700),
-  );
   Timer? _reticleTimer;
 
   @override
@@ -173,7 +169,6 @@ class _CameraScreenState extends State<CameraScreen>
     _clockTimer?.cancel();
     _reticleTimer?.cancel();
     _blockedTimer?.cancel();
-    _reticle.dispose();
     _camera.dispose();
     super.dispose();
   }
@@ -186,10 +181,7 @@ class _CameraScreenState extends State<CameraScreen>
     return DateTime.now().difference(p.timestamp) > _staleFixAge;
   }
 
-  bool get _fixIsUsable {
-    final Position? p = _livePosition;
-    return p != null && !_fixIsStale;
-  }
+  bool get _fixIsUsable => _livePosition != null && !_fixIsStale;
 
   // ---- Interactions --------------------------------------------------
 
@@ -197,7 +189,6 @@ class _CameraScreenState extends State<CameraScreen>
     if (area.width == 0 || area.height == 0) return;
     HapticFeedback.selectionClick();
     setState(() => _focusPoint = local);
-    _reticle.forward(from: 0);
     _reticleTimer?.cancel();
     _reticleTimer = Timer(const Duration(milliseconds: 1200), () {
       if (mounted) setState(() => _focusPoint = null);
@@ -260,7 +251,7 @@ class _CameraScreenState extends State<CameraScreen>
       if (!mounted) return;
       setState(() {
         _lastThumb = shot.bytes;
-        _lastEnvelope = shot.envelope;
+        _sessionCount++;
       });
       HapticFeedback.heavyImpact();
 
@@ -278,17 +269,10 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  void _openLastShot() {
-    final Uint8List? bytes = _lastThumb;
-    if (bytes == null) {
-      _showBlocked('No frames in this session yet.');
-      return;
-    }
+  void _openFrames() {
     HapticFeedback.selectionClick();
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => _LastFramePage(bytes: bytes, envelope: _lastEnvelope),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const FramesScreen()),
     );
   }
 
@@ -299,116 +283,153 @@ class _CameraScreenState extends State<CameraScreen>
     if (_permissionError != null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Viewfinder')),
-        body: _PermissionGate(error: _permissionError!, onRetry: _boot),
+        body: Padding(
+          padding: const EdgeInsets.all(Tokens.spaceBase),
+          child: ErrorState(
+            message: _permissionError!.permanentlyDenied
+                ? '${_permissionError!.permissionName} access is turned off. '
+                    'Enable it in system settings to capture frames.'
+                : '${_permissionError!.permissionName} access is needed to '
+                    'stamp and sign frames.',
+            actionLabel: _permissionError!.permanentlyDenied
+                ? 'Open settings'
+                : 'Allow ${_permissionError!.permissionName.toLowerCase()}',
+            onAction:
+                _permissionError!.permanentlyDenied ? openAppSettings : _boot,
+          ),
+        ),
       );
     }
+
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Viewfinder')),
-        body: _FatalError(message: _error!, onRetry: _boot),
+        body: Padding(
+          padding: const EdgeInsets.all(Tokens.spaceBase),
+          child: ErrorState(
+            message: 'The camera did not start. ${_error!}',
+            actionLabel: 'Try again',
+            onAction: _boot,
+          ),
+        ),
       );
     }
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Viewfinder'),
+        actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(right: Tokens.spaceBase),
+            child: IconButtonTile(
+              icon: _torchOn ? Icons.wb_sunny : Icons.wb_sunny_outlined,
+              semanticLabel: 'Torch',
+              color: _torchOn ? Tokens.accent : null,
+              onPressed: _toggleTorch,
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _StatusReadout(
-              position: _livePosition,
-              stale: _fixIsStale,
-              torchOn: _torchOn,
-              onBack: () => Navigator.of(context).maybePop(),
-              onTorch: _toggleTorch,
-            ),
-            Expanded(child: _buildFeed()),
-            _StampCard(
-              site: _siteName,
-              position: _livePosition,
-              now: _now,
-            ),
-            if (_blockedReason != null)
-              AccentPanel(
-                accent: Tokens.statusAlert,
-                background: Tokens.canvas,
-                padding: const EdgeInsets.fromLTRB(
-                    Tokens.spaceSnug, Tokens.spaceTight, Tokens.spaceSnug, Tokens.spaceTight),
-                child: Text(_blockedReason!,
-                    style: Tokens.body),
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceBase),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _StatusReadout(position: _livePosition, stale: _fixIsStale),
+              const SizedBox(height: Tokens.spaceSnug),
+              Expanded(child: _buildFeed()),
+              const SizedBox(height: Tokens.spaceSnug),
+              _StampCard(
+                site: _siteName,
+                position: _livePosition,
+                now: _now,
               ),
-            _ControlRow(
-              thumb: _lastThumb,
-              capturing: _capturing,
-              enabled: _fixIsUsable && !_initializing,
-              canFlip: cameras.length > 1,
-              onThumb: _openLastShot,
-              onShutter: _capture,
-              onFlip: _flipCamera,
-            ),
-          ],
+              if (_blockedReason != null) ...<Widget>[
+                const SizedBox(height: Tokens.spaceSnug),
+                ErrorState(message: _blockedReason!),
+              ],
+              const SizedBox(height: Tokens.spaceSnug),
+              _ControlRow(
+                thumb: _lastThumb,
+                count: _sessionCount,
+                capturing: _capturing,
+                enabled: _fixIsUsable && !_initializing,
+                canFlip: cameras.length > 1,
+                onFrames: _openFrames,
+                onShutter: _capture,
+                onFlip: _flipCamera,
+              ),
+              const SizedBox(height: Tokens.spaceBase),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildFeed() {
+    final Palette p = Palette.of(context);
     final CameraController? controller = _camera.controller;
-    if (_initializing || controller == null || !controller.value.isInitialized) {
-      return const ColoredBox(
-        color: Tokens.surfaceInset,
-        child: Center(child: Text('Starting camera', style: Tokens.dataSmall)),
-      );
-    }
 
-    return ClipRect(
-      child: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final Size area =
-                  Size(constraints.maxWidth, constraints.maxHeight);
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (TapDownDetails d) =>
-                    _handleFocusTap(d.localPosition, area),
-                child: OverflowBox(
-                  maxWidth: double.infinity,
-                  maxHeight: double.infinity,
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      width: area.width,
-                      height: area.width * controller.value.aspectRatio,
-                      child: CameraPreview(controller),
+    return PressCard(
+      padding: const EdgeInsets.all(Tokens.spaceTight),
+      child: ClipRRect(
+        borderRadius: Tokens.brControl,
+        child: ColoredBox(
+          color: p.surfaceInset,
+          child: (_initializing ||
+                  controller == null ||
+                  !controller.value.isInitialized)
+              ? Center(child: Text('Starting camera', style: p.dataSmall))
+              : Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    LayoutBuilder(
+                      builder:
+                          (BuildContext context, BoxConstraints constraints) {
+                        final Size area = Size(
+                            constraints.maxWidth, constraints.maxHeight);
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (TapDownDetails d) =>
+                              _handleFocusTap(d.localPosition, area),
+                          child: OverflowBox(
+                            maxWidth: double.infinity,
+                            maxHeight: double.infinity,
+                            child: FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: area.width,
+                                height: area.width *
+                                    controller.value.aspectRatio,
+                                child: CameraPreview(controller),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                  ),
+                    if (_focusPoint != null)
+                      Positioned(
+                        left: _focusPoint!.dx - Tokens.markSize,
+                        top: _focusPoint!.dy - Tokens.markSize,
+                        child: Container(
+                          width: Tokens.touchMin,
+                          height: Tokens.touchMin,
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: Tokens.accent,
+                              width: Tokens.borderWidth,
+                            ),
+                            borderRadius: Tokens.brControl,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              );
-            },
-          ),
-          if (_focusPoint != null)
-            AnimatedBuilder(
-              animation: _reticle,
-              builder: (BuildContext context, Widget? child) {
-                final double t =
-                    Curves.easeOut.transform(_reticle.value.clamp(0.0, 1.0));
-                return Positioned(
-                  left: _focusPoint!.dx - 24,
-                  top: _focusPoint!.dy - 24,
-                  child: Opacity(opacity: 1 - (t * 0.4), child: child),
-                );
-              },
-              child: Container(
-                width: Tokens.touchMin,
-                height: Tokens.touchMin,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Tokens.statusAlert, width: 2),
-                  borderRadius: Tokens.brControl,
-                ),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -418,69 +439,39 @@ class _CameraScreenState extends State<CameraScreen>
 // Status readout
 // =======================================================================
 
-/// Top of the viewfinder. Never hidden — a camera that silently loses GPS is
-/// worse than one that says so.
+/// Never hidden — a camera that silently loses GPS is worse than one that
+/// says so.
 class _StatusReadout extends StatelessWidget {
-  const _StatusReadout({
-    required this.position,
-    required this.stale,
-    required this.torchOn,
-    required this.onBack,
-    required this.onTorch,
-  });
+  const _StatusReadout({required this.position, required this.stale});
 
   final Position? position;
   final bool stale;
-  final bool torchOn;
-  final VoidCallback onBack;
-  final VoidCallback onTorch;
 
   @override
   Widget build(BuildContext context) {
     final Position? p = position;
 
     final String text;
-    final Color color;
+    final Color tint;
     if (p == null) {
-      text = 'NO FIX — SEARCHING';
-      color = Tokens.statusAlert;
+      text = 'no fix — searching';
+      tint = Tokens.statusAlert;
     } else if (stale) {
-      text = 'FIX ±${p.accuracy.round()}M — STALE';
-      color = Tokens.statusAlert;
+      text = 'fix ±${p.accuracy.round()}m — stale';
+      tint = Tokens.statusAlert;
     } else if (p.accuracy > _weakFixMetres) {
-      text = 'FIX ±${p.accuracy.round()}M — WEAK';
-      color = Tokens.statusAlert;
+      text = 'fix ±${p.accuracy.round()}m — weak';
+      tint = Tokens.statusAlert;
     } else {
-      text = 'FIX ±${p.accuracy.round()}M';
-      color = Tokens.textPrimary;
+      text = 'fix ±${p.accuracy.round()}m';
+      tint = Tokens.statusOk;
     }
 
-    return Container(
-      height: Tokens.touchMin,
-      padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceHair),
-      decoration: const BoxDecoration(
-        color: Tokens.canvas,
-        border: Border(bottom: Tokens.sideOutline),
-      ),
-      child: Row(
-        children: <Widget>[
-          IconButton(
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back, size: Tokens.iconBase),
-            color: Tokens.textPrimary,
-            tooltip: 'Back',
-          ),
-          Expanded(child: StatusText(text: text, color: color)),
-          IconButton(
-            onPressed: onTorch,
-            icon: Icon(
-              torchOn ? Icons.wb_sunny : Icons.wb_sunny_outlined,
-              size: Tokens.iconBase,
-            ),
-            color: torchOn ? Tokens.statusAlert : Tokens.textSecondary,
-            tooltip: 'Torch',
-          ),
-        ],
+    return Semantics(
+      liveRegion: true,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: StatusBadge(label: text, color: tint),
       ),
     );
   }
@@ -504,30 +495,28 @@ class _StampCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Position? p = position;
+    final Palette p = Palette.of(context);
+    final Position? pos = position;
 
     return AccentPanel(
-      accent: Tokens.statusAlert,
-      padding: const EdgeInsets.all(Tokens.spaceSnug),
+      accent: Tokens.accent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            (site ?? 'Locating site').toUpperCase(),
-            style: Tokens.label.copyWith(color: Tokens.textPrimary),
-          ),
+          Text(site ?? 'Locating site', style: p.cardTitle),
           const SizedBox(height: Tokens.spaceHair),
           Text(
-            p == null
+            pos == null
                 ? '——.——————, ——.——————'
-                : '${p.latitude.toStringAsFixed(6)}, '
-                    '${p.longitude.toStringAsFixed(6)}  ${p.altitude.round()}M',
-            style: Tokens.dataStamp,
+                : '${pos.latitude.toStringAsFixed(6)}, '
+                    '${pos.longitude.toStringAsFixed(6)}  '
+                    '${pos.altitude.round()}M',
+            style: p.dataStamp,
           ),
           const SizedBox(height: Tokens.spaceHair),
           Text(
             DateFormat('ddMMMyy HH:mm').format(now).toUpperCase(),
-            style: Tokens.dataStamp,
+            style: p.dataStamp,
           ),
         ],
       ),
@@ -542,54 +531,82 @@ class _StampCard extends StatelessWidget {
 class _ControlRow extends StatelessWidget {
   const _ControlRow({
     required this.thumb,
+    required this.count,
     required this.capturing,
     required this.enabled,
     required this.canFlip,
-    required this.onThumb,
+    required this.onFrames,
     required this.onShutter,
     required this.onFlip,
   });
 
   final Uint8List? thumb;
+  final int count;
   final bool capturing;
   final bool enabled;
   final bool canFlip;
-  final VoidCallback onThumb;
+  final VoidCallback onFrames;
   final VoidCallback onShutter;
   final VoidCallback onFlip;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: Tokens.spaceBase, vertical: Tokens.spaceSnug),
-      decoration: const BoxDecoration(
-        color: Tokens.canvas,
-        border: Border(top: Tokens.sideOutline),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          _FrameThumb(thumb: thumb, onTap: onThumb),
-          _Shutter(
-            enabled: enabled,
-            busy: capturing,
-            onTap: onShutter,
-          ),
-          _IconSquare(
-            icon: Icons.cameraswitch_outlined,
-            onTap: canFlip ? onFlip : null,
-            tooltip: 'Switch camera',
-          ),
-        ],
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        _FramesButton(thumb: thumb, count: count, onTap: onFrames),
+        _Shutter(enabled: enabled, busy: capturing, onTap: onShutter),
+        IconButtonTile(
+          icon: Icons.cameraswitch_outlined,
+          semanticLabel: 'Switch camera',
+          onPressed: canFlip ? onFlip : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// Opens the scrollable gallery of frames this app captured.
+class _FramesButton extends StatelessWidget {
+  const _FramesButton({
+    required this.thumb,
+    required this.count,
+    required this.onTap,
+  });
+
+  final Uint8List? thumb;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+    final Uint8List? bytes = thumb;
+
+    return SizedBox(
+      width: Tokens.thumbSize,
+      height: Tokens.thumbSize,
+      child: PressCard(
+        onTap: onTap,
+        borderRadius: Tokens.brControl,
+        padding: EdgeInsets.zero,
+        color: p.surfaceInset,
+        semanticLabel: 'Frames. $count captured this session',
+        child: ClipRRect(
+          borderRadius: Tokens.brControl,
+          child: bytes == null
+              ? Icon(Icons.photo_outlined,
+                  size: Tokens.iconBase, color: p.textSecondary)
+              : Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true),
+        ),
       ),
     );
   }
 }
 
-/// 44dp square shutter. Disabled state still accepts taps so it can explain
-/// itself rather than doing nothing.
-class _Shutter extends StatefulWidget {
+/// Square shutter. Disabled still accepts taps so it can explain itself.
+class _Shutter extends StatelessWidget {
   const _Shutter({
     required this.enabled,
     required this.busy,
@@ -601,268 +618,32 @@ class _Shutter extends StatefulWidget {
   final VoidCallback onTap;
 
   @override
-  State<_Shutter> createState() => _ShutterState();
-}
-
-class _ShutterState extends State<_Shutter> {
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final bool live = widget.enabled && !widget.busy;
+    final Palette p = Palette.of(context);
+    final bool live = enabled && !busy;
 
-    return Semantics(
-      button: true,
-      enabled: live,
-      label: 'Capture frame',
-      child: GestureDetector(
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTap: widget.busy ? null : widget.onTap,
-        // Touch target stays 48dp even though the control reads as 44dp.
-        child: SizedBox(
-          width: Tokens.touchMin + Tokens.spaceBase,
-          height: Tokens.touchMin + Tokens.spaceBase,
-          child: Center(
-            child: AnimatedScale(
-              scale: _pressed && live ? 0.96 : 1,
-              duration: const Duration(milliseconds: 90),
-              child: Container(
-                width: Tokens.shutterSize,
-                height: Tokens.shutterSize,
-                decoration: BoxDecoration(
-                  color: !live
-                      ? Tokens.surfaceInset
-                      : (_pressed ? Tokens.accentPressed : Tokens.textPrimary),
-                  borderRadius: Tokens.brControl,
+    return SizedBox(
+      width: Tokens.shutterSize,
+      height: Tokens.shutterSize,
+      child: PressCard(
+        onTap: busy ? null : onTap,
+        color: live ? Tokens.accent : p.surfaceInset,
+        borderRadius: Tokens.brControl,
+        padding: EdgeInsets.zero,
+        semanticLabel: 'Capture frame',
+        child: busy
+            ? const Padding(
+                padding: EdgeInsets.all(Tokens.spaceBase),
+                child: CircularProgressIndicator(
+                  strokeWidth: Tokens.borderWidth,
+                  color: Tokens.onIdentity,
                 ),
-                child: widget.busy
-                    ? const Padding(
-                        padding: EdgeInsets.all(Tokens.spaceSnug),
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Tokens.surface),
-                      )
-                    : Icon(
-                        Icons.circle,
-                        size: Tokens.iconSmall,
-                        color: live ? Tokens.surface : Tokens.textSecondary,
-                      ),
+              )
+            : Icon(
+                Icons.circle,
+                size: Tokens.iconTile,
+                color: live ? Tokens.onIdentity : p.textSecondary,
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Thumbnail of the last frame — the way out to review what was just shot.
-class _FrameThumb extends StatelessWidget {
-  const _FrameThumb({required this.thumb, required this.onTap});
-
-  final Uint8List? thumb;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final Uint8List? bytes = thumb;
-
-    return Semantics(
-      button: true,
-      label: 'Review last frame',
-      child: GestureDetector(
-        onTap: onTap,
-        child: SizedBox(
-          width: Tokens.touchMin + Tokens.spaceBase,
-          height: Tokens.touchMin + Tokens.spaceBase,
-          child: Center(
-            child: Container(
-              width: Tokens.thumbSize,
-              height: Tokens.thumbSize,
-              decoration: BoxDecoration(
-                color: Tokens.surfaceInset,
-                border: Border.all(color: Tokens.outline),
-                borderRadius: Tokens.brControl,
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: bytes == null
-                  ? const Icon(Icons.photo_outlined,
-                      size: 20, color: Tokens.textSecondary)
-                  : Image.memory(bytes,
-                      fit: BoxFit.cover, gaplessPlayback: true),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _IconSquare extends StatelessWidget {
-  const _IconSquare({required this.icon, this.onTap, this.tooltip});
-
-  final IconData icon;
-  final VoidCallback? onTap;
-  final String? tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip ?? '',
-      child: GestureDetector(
-        onTap: onTap,
-        child: SizedBox(
-          width: Tokens.touchMin + Tokens.spaceBase,
-          height: Tokens.touchMin + Tokens.spaceBase,
-          child: Center(
-            child: Container(
-              width: Tokens.shutterSize,
-              height: Tokens.shutterSize,
-              decoration: BoxDecoration(
-                color: Tokens.surface,
-                border: Border.all(color: Tokens.outline),
-                borderRadius: Tokens.brControl,
-              ),
-              child: Icon(icon,
-                  size: Tokens.iconBase, color: onTap == null ? Tokens.outline : Tokens.textPrimary),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// =======================================================================
-// Last frame review
-// =======================================================================
-
-class _LastFramePage extends StatelessWidget {
-  const _LastFramePage({required this.bytes, required this.envelope});
-
-  final Uint8List bytes;
-  final SignedEnvelope? envelope;
-
-  @override
-  Widget build(BuildContext context) {
-    final SignedEnvelope? e = envelope;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Last frame')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceTight, Tokens.spaceBase, Tokens.spaceScreen),
-        children: <Widget>[
-          Container(
-            decoration: BoxDecoration(border: Border.all(color: Tokens.outline)),
-            child: ColoredBox(
-              color: Tokens.surfaceInset,
-              child: InteractiveViewer(
-                maxScale: Tokens.zoomMaxScale,
-                child: Image.memory(bytes, fit: BoxFit.contain),
-              ),
-            ),
-          ),
-          const SizedBox(height: Tokens.spaceSection),
-          const SectionHead(title: 'Signed payload'),
-          const SizedBox(height: Tokens.spaceSnug),
-          if (e != null)
-            FieldCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  DataLine(
-                    label: 'Coordinates',
-                    value: '${e.lat.toStringAsFixed(6)}, '
-                        '${e.lon.toStringAsFixed(6)}',
-                  ),
-                  DataLine(
-                      label: 'Altitude',
-                      value: '${e.alt.toStringAsFixed(1)} m'),
-                  DataLine(
-                    label: 'Captured',
-                    value: '${DateFormat('ddMMMyy HH:mm:ss').format(
-                      DateTime.fromMillisecondsSinceEpoch(e.timestampMs,
-                          isUtc: true),
-                    ).toUpperCase()} UTC',
-                  ),
-                  DataLine(label: 'Device', value: e.deviceId),
-                  DataLine(label: 'Signing key', value: e.kid ?? '—'),
-                  DataLine(label: 'Banner hash', value: e.pixelHash),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-// =======================================================================
-// Blocking states
-// =======================================================================
-
-class _PermissionGate extends StatelessWidget {
-  const _PermissionGate({required this.error, required this.onRetry});
-
-  final PermissionRequiredException error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(Tokens.spaceBase),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          AccentPanel(
-            accent: Tokens.statusAlert,
-            child: Text(
-              error.permanentlyDenied
-                  ? '${error.permissionName} access is turned off. Enable it in '
-                      'system settings to capture frames.'
-                  : '${error.permissionName} access is needed to stamp and sign '
-                      'frames.',
-              style: Tokens.body,
-            ),
-          ),
-          const SizedBox(height: Tokens.spaceSection),
-          if (error.permanentlyDenied)
-            const FilledButton(
-              onPressed: openAppSettings,
-              child: Text('Open settings'),
-            )
-          else
-            FilledButton(
-              onPressed: onRetry,
-              child: Text('Allow ${error.permissionName.toLowerCase()}'),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FatalError extends StatelessWidget {
-  const _FatalError({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(Tokens.spaceBase),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          AccentPanel(
-            accent: Tokens.statusAlert,
-            child: Text('The camera did not start. $message', style: Tokens.body),
-          ),
-          const SizedBox(height: Tokens.spaceSection),
-          FilledButton(onPressed: onRetry, child: const Text('Try again')),
-        ],
       ),
     );
   }
