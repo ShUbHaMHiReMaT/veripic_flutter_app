@@ -1,89 +1,88 @@
-import 'dart:math' as math;
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Design tokens and reusable chrome for VeriPic's "cyber forensics" look.
+/// VeriPic design tokens.
 ///
-/// Deep OLED ground, neon emerald accents, crimson alerts, frosted glass.
+/// Light, flat and quiet: white cards on a soft blue-grey ground, hairline
+/// borders instead of shadows, one blue accent, and pastel tints reserved for
+/// status. No gradients, no glass, no glow.
 class VP {
   VP._();
 
-  // ---- Palette -------------------------------------------------------
-  static const Color bg = Color(0xFF0A0E17);
-  static const Color surface = Color(0xFF111726);
-  static const Color surfaceHigh = Color(0xFF18202F);
-  static const Color accent = Color(0xFF00E696);
-  static const Color accentDim = Color(0xFF0B8F63);
-  static const Color danger = Color(0xFFFF3B30);
-  static const Color warn = Color(0xFFFFB020);
-  static const Color info = Color(0xFF3B9EFF);
+  // ---- Ground & structure --------------------------------------------
+  static const Color bg = Color(0xFFF4F7FB);
+  static const Color surface = Color(0xFFFFFFFF);
+  static const Color border = Color(0xFFE4EAF2);
+  static const Color divider = Color(0xFFEDF1F7);
 
-  static const Color textPrimary = Color(0xFFEAF2F5);
-  static const Color textSecondary = Color(0xFF8E9BB3);
-  static const Color textFaint = Color(0xFF56617A);
-  static const Color hairline = Color(0x1AFFFFFF);
+  // ---- Accent ---------------------------------------------------------
+  static const Color primary = Color(0xFF1A6BD8);
+  static const Color primaryInk = Color(0xFF0B4EA6);
+  static const Color primarySoft = Color(0xFFEAF2FD);
 
-  // ---- Type ----------------------------------------------------------
+  // ---- Status ---------------------------------------------------------
+  static const Color success = Color(0xFF0E8A63);
+  static const Color successSoft = Color(0xFFE7F7F1);
+  static const Color danger = Color(0xFFD92D20);
+  static const Color dangerSoft = Color(0xFFFDECEA);
+  static const Color warn = Color(0xFFB25E09);
+  static const Color warnSoft = Color(0xFFFFF4E6);
+
+  // ---- Neutral tints (the pastel rows) --------------------------------
+  static const Color neutralSoft = Color(0xFFF1F4F9);
+  static const Color lavenderSoft = Color(0xFFF3EFFB);
+
+  // ---- Ink ------------------------------------------------------------
+  static const Color ink = Color(0xFF111A2B);
+  static const Color inkMuted = Color(0xFF5B6B84);
+  static const Color inkFaint = Color(0xFF8B99AE);
+
   static const String mono = 'monospace';
 
-  static const TextStyle display = TextStyle(
-    fontSize: 34,
-    fontWeight: FontWeight.w800,
-    letterSpacing: -0.8,
-    color: textPrimary,
-    height: 1.05,
+  // ---- Type -----------------------------------------------------------
+  static const TextStyle h1 = TextStyle(
+    fontSize: 26,
+    fontWeight: FontWeight.w700,
+    color: ink,
+    letterSpacing: -0.4,
+    height: 1.15,
   );
 
-  static const TextStyle title = TextStyle(
-    fontSize: 17,
-    fontWeight: FontWeight.w700,
-    color: textPrimary,
-    letterSpacing: -0.2,
+  static const TextStyle h2 = TextStyle(
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    color: ink,
+    letterSpacing: -0.1,
   );
 
   static const TextStyle body = TextStyle(
     fontSize: 13.5,
-    color: textSecondary,
-    height: 1.4,
+    color: inkMuted,
+    height: 1.45,
   );
 
-  /// Small uppercase tracking-wide label used for section headers / codes.
-  static const TextStyle eyebrow = TextStyle(
-    fontSize: 10.5,
-    fontWeight: FontWeight.w700,
-    letterSpacing: 1.6,
-    color: textFaint,
+  static const TextStyle label = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    color: inkFaint,
   );
 
   static const TextStyle monoSmall = TextStyle(
     fontFamily: mono,
     fontSize: 11.5,
-    color: textPrimary,
+    color: ink,
     height: 1.35,
   );
 
-  // ---- Shape ---------------------------------------------------------
-  static const double radius = 18;
+  static const double radius = 14;
   static const BorderRadius br = BorderRadius.all(Radius.circular(radius));
 
-  /// Soft neon halo used behind active elements.
-  static List<BoxShadow> glow(Color c, {double strength = 1}) => <BoxShadow>[
-        BoxShadow(
-          color: c.withValues(alpha: 0.28 * strength),
-          blurRadius: 26 * strength,
-          spreadRadius: -4,
-        ),
-      ];
-
   static ThemeData theme() {
-    const ColorScheme scheme = ColorScheme.dark(
-      primary: accent,
-      onPrimary: Color(0xFF00110B),
-      secondary: info,
+    const ColorScheme scheme = ColorScheme.light(
+      primary: primary,
+      onPrimary: Colors.white,
       surface: surface,
-      onSurface: textPrimary,
+      onSurface: ink,
       error: danger,
     );
 
@@ -91,97 +90,207 @@ class VP {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: bg,
-      splashFactory: InkSparkle.splashFactory,
+      splashFactory: InkRipple.splashFactory,
+      dividerColor: divider,
       appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.transparent,
+        backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: TextStyle(
           fontSize: 17,
-          fontWeight: FontWeight.w700,
-          color: textPrimary,
+          fontWeight: FontWeight.w600,
+          color: ink,
           letterSpacing: -0.2,
         ),
-        iconTheme: IconThemeData(color: textPrimary),
+        iconTheme: IconThemeData(color: ink),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: surfaceHigh,
-        contentTextStyle: const TextStyle(color: textPrimary),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        backgroundColor: ink,
+        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 13),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: accent,
-          foregroundColor: const Color(0xFF00110B),
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
       textTheme: const TextTheme(
-        bodyMedium: TextStyle(color: textPrimary),
-        bodySmall: TextStyle(color: textSecondary),
+        bodyMedium: TextStyle(color: ink),
+        bodySmall: TextStyle(color: inkMuted),
       ),
     );
   }
 }
 
-/// Frosted-glass container — the primary surface treatment across the app.
-class GlassPanel extends StatelessWidget {
-  const GlassPanel({
+/// Flat white card — the single container used across the app.
+class AppCard extends StatelessWidget {
+  const AppCard({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(18),
-    this.borderRadius = VP.br,
-    this.blur = 18,
-    this.tint,
+    this.padding = const EdgeInsets.all(16),
+    this.color,
     this.borderColor,
-    this.glowColor,
-    this.opacity = 0.55,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final BorderRadius borderRadius;
-  final double blur;
-  final Color? tint;
+  final Color? color;
   final Color? borderColor;
-  final Color? glowColor;
-  final double opacity;
 
   @override
   Widget build(BuildContext context) {
-    final Color base = tint ?? VP.surface;
-    return DecoratedBox(
+    return Container(
+      padding: padding,
       decoration: BoxDecoration(
-        borderRadius: borderRadius,
-        boxShadow: glowColor == null ? null : VP.glow(glowColor!, strength: 0.7),
+        color: color ?? VP.surface,
+        borderRadius: VP.br,
+        border: Border.all(color: borderColor ?? VP.border),
       ),
-      child: ClipRRect(
-        borderRadius: borderRadius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              borderRadius: borderRadius,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: <Color>[
-                  base.withValues(alpha: opacity + 0.12),
-                  base.withValues(alpha: opacity - 0.08),
-                ],
+      child: child,
+    );
+  }
+}
+
+/// Icon + title over a hairline rule — the header treatment from the design.
+class SectionHeader extends StatelessWidget {
+  const SectionHeader({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Icon(icon, size: 18, color: VP.primary),
+            const SizedBox(width: 9),
+            Expanded(child: Text(title, style: VP.h2)),
+            if (trailing != null) trailing!,
+          ],
+        ),
+        const SizedBox(height: 10),
+        const Divider(height: 1, thickness: 1, color: VP.divider),
+      ],
+    );
+  }
+}
+
+/// Tinted list row: leading label, optional supporting line, trailing value.
+///
+/// This is the core list unit of the design — a flat band of colour with no
+/// border, separated from its neighbours by a 1px gap.
+class TintTile extends StatelessWidget {
+  const TintTile({
+    super.key,
+    required this.label,
+    this.tint = VP.neutralSoft,
+    this.value,
+    this.supporting,
+    this.icon,
+    this.iconColor,
+    this.onTap,
+    this.selected = false,
+    this.dense = false,
+  });
+
+  final String label;
+  final Color tint;
+  final String? value;
+  final String? supporting;
+  final IconData? icon;
+  final Color? iconColor;
+  final VoidCallback? onTap;
+
+  /// Solid accent treatment, matching the highlighted row in the design.
+  final bool selected;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color fg = selected ? Colors.white : VP.ink;
+    final Color background = selected ? VP.primary : tint;
+
+    return Material(
+      color: background,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: dense ? 12 : 15,
+          ),
+          child: Row(
+            children: <Widget>[
+              if (icon != null) ...<Widget>[
+                Icon(icon,
+                    size: 18,
+                    color: selected ? Colors.white : (iconColor ?? VP.primary)),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: fg,
+                      ),
+                    ),
+                    if (supporting != null) ...<Widget>[
+                      const SizedBox(height: 3),
+                      Text(
+                        supporting!,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.35,
+                          color: selected
+                              ? Colors.white.withValues(alpha: 0.85)
+                              : VP.inkMuted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-              border: Border.all(
-                color: borderColor ?? VP.hairline,
-                width: 1,
-              ),
-            ),
-            child: child,
+              if (value != null) ...<Widget>[
+                const SizedBox(width: 12),
+                Text(
+                  value!,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? Colors.white : VP.inkMuted,
+                  ),
+                ),
+              ],
+              if (onTap != null && value == null)
+                Icon(Icons.chevron_right_rounded,
+                    size: 20,
+                    color: selected
+                        ? Colors.white.withValues(alpha: 0.9)
+                        : VP.inkFaint),
+            ],
           ),
         ),
       ),
@@ -189,47 +298,65 @@ class GlassPanel extends StatelessWidget {
   }
 }
 
-/// Small pill label, e.g. `HMAC-SHA256` or a live status chip.
-class StatusChip extends StatelessWidget {
-  const StatusChip({
+/// Groups [TintTile]s into one rounded, clipped stack with 1px separators.
+class TileGroup extends StatelessWidget {
+  const TileGroup({super.key, required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: VP.br,
+      child: Column(
+        children: <Widget>[
+          for (int i = 0; i < children.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(height: 1),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Small flat status label.
+class Pill extends StatelessWidget {
+  const Pill({
     super.key,
     required this.label,
-    this.color = VP.accent,
+    this.color = VP.primary,
+    this.background,
     this.icon,
-    this.dense = false,
   });
 
   final String label;
   final Color color;
+  final Color? background;
   final IconData? icon;
-  final bool dense;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: dense ? 8 : 10,
-        vertical: dense ? 4 : 6,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        color: background ?? color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (icon != null) ...<Widget>[
-            Icon(icon, size: dense ? 11 : 13, color: color),
+            Icon(icon, size: 12, color: color),
             const SizedBox(width: 5),
           ],
           Text(
             label,
             style: TextStyle(
               color: color,
-              fontSize: dense ? 10 : 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
           ),
         ],
@@ -238,134 +365,9 @@ class StatusChip extends StatelessWidget {
   }
 }
 
-/// Slow-drifting grid + radial bloom used as the app-wide backdrop.
-///
-/// Deliberately cheap: one repainting [CustomPainter] driven by a single
-/// looping controller, no per-frame allocations beyond the paint objects.
-class ForensicBackdrop extends StatefulWidget {
-  const ForensicBackdrop({
-    super.key,
-    required this.child,
-    this.accent = VP.accent,
-    this.animate = true,
-  });
-
-  final Widget child;
-  final Color accent;
-  final bool animate;
-
-  @override
-  State<ForensicBackdrop> createState() => _ForensicBackdropState();
-}
-
-class _ForensicBackdropState extends State<ForensicBackdrop>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 18),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.animate) _c.repeat();
-  }
-
-  @override
-  void didUpdateWidget(covariant ForensicBackdrop oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.animate && !_c.isAnimating) {
-      _c.repeat();
-    } else if (!widget.animate && _c.isAnimating) {
-      _c.stop();
-    }
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: <Widget>[
-        Positioned.fill(
-          child: RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: _c,
-              builder: (BuildContext context, _) => CustomPaint(
-                painter: _BackdropPainter(_c.value, widget.accent),
-              ),
-            ),
-          ),
-        ),
-        widget.child,
-      ],
-    );
-  }
-}
-
-class _BackdropPainter extends CustomPainter {
-  _BackdropPainter(this.t, this.accent);
-
-  final double t;
-  final Color accent;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = VP.bg);
-
-    // Ambient bloom that drifts on a slow Lissajous path.
-    final Offset c1 = Offset(
-      size.width * (0.2 + 0.25 * math.sin(t * 2 * math.pi)),
-      size.height * (0.12 + 0.08 * math.cos(t * 2 * math.pi)),
-    );
-    canvas.drawCircle(
-      c1,
-      size.width * 0.7,
-      Paint()
-        ..shader = RadialGradient(
-          colors: <Color>[accent.withValues(alpha: 0.10), Colors.transparent],
-        ).createShader(Rect.fromCircle(center: c1, radius: size.width * 0.7)),
-    );
-
-    final Offset c2 = Offset(
-      size.width * (0.85 - 0.15 * math.cos(t * 2 * math.pi)),
-      size.height * (0.82 + 0.06 * math.sin(t * 2 * math.pi)),
-    );
-    canvas.drawCircle(
-      c2,
-      size.width * 0.6,
-      Paint()
-        ..shader = RadialGradient(
-          colors: <Color>[VP.info.withValues(alpha: 0.07), Colors.transparent],
-        ).createShader(Rect.fromCircle(center: c2, radius: size.width * 0.6)),
-    );
-
-    // Fine survey grid.
-    final Paint grid = Paint()
-      ..color = Colors.white.withValues(alpha: 0.028)
-      ..strokeWidth = 1;
-    const double step = 34;
-    final double offset = (t * step) % step;
-    for (double x = -step + offset; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
-    }
-    for (double y = -step + offset; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _BackdropPainter old) =>
-      old.t != t || old.accent != accent;
-}
-
-/// Label/value row with tap-to-copy, used throughout the metadata drawers.
-class DataRow2 extends StatefulWidget {
-  const DataRow2({
+/// Label/value row with tap-to-copy, used in the metadata drawers.
+class KvRow extends StatefulWidget {
+  const KvRow({
     super.key,
     required this.label,
     required this.value,
@@ -381,10 +383,10 @@ class DataRow2 extends StatefulWidget {
   final double labelWidth;
 
   @override
-  State<DataRow2> createState() => _DataRow2State();
+  State<KvRow> createState() => _KvRowState();
 }
 
-class _DataRow2State extends State<DataRow2> {
+class _KvRowState extends State<KvRow> {
   bool _copied = false;
 
   Future<void> _copy() async {
@@ -405,10 +407,7 @@ class _DataRow2State extends State<DataRow2> {
         children: <Widget>[
           SizedBox(
             width: widget.labelWidth,
-            child: Text(
-              widget.label,
-              style: const TextStyle(color: VP.textFaint, fontSize: 12),
-            ),
+            child: Text(widget.label, style: VP.label),
           ),
           Expanded(
             child: SelectableText(
@@ -419,13 +418,13 @@ class _DataRow2State extends State<DataRow2> {
           if (widget.copyable)
             InkWell(
               onTap: _copy,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(6),
               child: Padding(
                 padding: const EdgeInsets.all(5),
                 child: Icon(
                   _copied ? Icons.check_rounded : Icons.copy_rounded,
                   size: 14,
-                  color: _copied ? VP.accent : VP.textFaint,
+                  color: _copied ? VP.success : VP.inkFaint,
                 ),
               ),
             ),

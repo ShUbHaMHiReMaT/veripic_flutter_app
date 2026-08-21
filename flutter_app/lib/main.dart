@@ -22,10 +22,10 @@ Future<void> main() async {
   }
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    statusBarBrightness: Brightness.dark,
-    systemNavigationBarColor: VP.bg,
-    systemNavigationBarIconBrightness: Brightness.light,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: VP.surface,
+    systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const VeriPicApp());
 }
