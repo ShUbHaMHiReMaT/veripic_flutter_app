@@ -43,3 +43,14 @@ flutter:
   uses-material-design: true
   assets:
     - .env
+    - assets/fonts/
+
+  # Space Grotesk ships as a single variable font (wght 300-700); weights are
+  # selected at use sites via FontVariation rather than separate files.
+  fonts:
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk.ttf
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf

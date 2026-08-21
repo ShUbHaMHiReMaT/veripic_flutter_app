@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,6 +12,12 @@ import '../main.dart' show cameras;
 import '../services/camera_service.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
+
+/// Accuracy worse than this reads as a weak fix in the status readout.
+const double _weakFixMetres = 15;
+
+/// A fix older than this is stale and no longer trustworthy for a stamp.
+const Duration _staleFixAge = Duration(seconds: 30);
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -26,7 +33,7 @@ class _CameraScreenState extends State<CameraScreen>
   Position? _livePosition;
   StreamSubscription<Position>? _positionSub;
   Timer? _clockTimer;
-  DateTime _nowUtc = DateTime.now().toUtc();
+  DateTime _now = DateTime.now();
 
   bool _initializing = true;
   bool _capturing = false;
@@ -36,7 +43,18 @@ class _CameraScreenState extends State<CameraScreen>
   int _cameraIndex = 0;
   bool _torchOn = false;
 
-  /// Most recent capture — backs the gallery thumbnail in the control bar.
+  /// Reverse-geocoded site name for the stamp card. Resolved on first fix and
+  /// again only after the operator has actually moved.
+  String? _siteName;
+  Position? _siteResolvedAt;
+  bool _resolvingSite = false;
+
+  /// Shown when the shutter is tapped while it is disabled — a camera that
+  /// silently refuses is worse than one that says why.
+  String? _blockedReason;
+  Timer? _blockedTimer;
+
+  /// Most recent capture — backs the thumbnail in the control row.
   Uint8List? _lastThumb;
   SignedEnvelope? _lastEnvelope;
 
@@ -63,13 +81,13 @@ class _CameraScreenState extends State<CameraScreen>
     });
     try {
       if (cameras.isEmpty) {
-        throw StateError('No camera available on this device');
+        throw StateError('No camera on this device');
       }
       _cameraIndex = _cameraIndex.clamp(0, cameras.length - 1);
       await _camera.initialize(cameras[_cameraIndex]);
 
       _clockTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => _nowUtc = DateTime.now().toUtc());
+        if (mounted) setState(() => _now = DateTime.now());
       });
       _positionSub ??= Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -78,7 +96,9 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       ).listen(
         (Position p) {
-          if (mounted) setState(() => _livePosition = p);
+          if (!mounted) return;
+          setState(() => _livePosition = p);
+          unawaited(_maybeResolveSite(p));
         },
         onError: (Object _) {},
       );
@@ -101,6 +121,40 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  /// Resolves the site name on first fix, then only after a 50 m move.
+  Future<void> _maybeResolveSite(Position p) async {
+    if (_resolvingSite) return;
+    final Position? last = _siteResolvedAt;
+    if (last != null) {
+      final double moved = Geolocator.distanceBetween(
+          last.latitude, last.longitude, p.latitude, p.longitude);
+      if (moved < 50) return;
+    }
+
+    _resolvingSite = true;
+    try {
+      final List<Placemark> marks =
+          await placemarkFromCoordinates(p.latitude, p.longitude);
+      if (!mounted || marks.isEmpty) return;
+      final Placemark m = marks.first;
+      final String name = <String?>[
+        m.subLocality,
+        m.locality,
+        m.administrativeArea,
+      ].firstWhere((String? s) => s != null && s.isNotEmpty,
+              orElse: () => null) ??
+          'Unnamed site';
+      setState(() {
+        _siteName = name;
+        _siteResolvedAt = p;
+      });
+    } catch (_) {
+      // Geocoder unavailable — the stamp card falls back to coordinates only.
+    } finally {
+      _resolvingSite = false;
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final CameraController? c = _camera.controller;
@@ -118,9 +172,23 @@ class _CameraScreenState extends State<CameraScreen>
     _positionSub?.cancel();
     _clockTimer?.cancel();
     _reticleTimer?.cancel();
+    _blockedTimer?.cancel();
     _reticle.dispose();
     _camera.dispose();
     super.dispose();
+  }
+
+  // ---- Fix quality ---------------------------------------------------
+
+  bool get _fixIsStale {
+    final Position? p = _livePosition;
+    if (p == null) return true;
+    return DateTime.now().difference(p.timestamp) > _staleFixAge;
+  }
+
+  bool get _fixIsUsable {
+    final Position? p = _livePosition;
+    return p != null && !_fixIsStale;
   }
 
   // ---- Interactions --------------------------------------------------
@@ -159,10 +227,30 @@ class _CameraScreenState extends State<CameraScreen>
     await _boot();
   }
 
+  void _showBlocked(String reason) {
+    HapticFeedback.selectionClick();
+    _blockedTimer?.cancel();
+    setState(() => _blockedReason = reason);
+    _blockedTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _blockedReason = null);
+    });
+  }
+
   Future<void> _capture() async {
     if (_capturing) return;
+
+    if (!_fixIsUsable) {
+      _showBlocked(_livePosition == null
+          ? 'No GPS fix yet. Move away from walls and try again.'
+          : 'GPS fix is stale. Wait for it to refresh.');
+      return;
+    }
+
     HapticFeedback.mediumImpact();
-    setState(() => _capturing = true);
+    setState(() {
+      _capturing = true;
+      _blockedReason = null;
+    });
 
     try {
       // CameraService already stamps, signs, embeds and exports to the
@@ -180,18 +268,11 @@ class _CameraScreenState extends State<CameraScreen>
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(
           duration: Duration(seconds: 2),
-          content: Text('Signed and saved to the VeriPic album'),
+          content: Text('Frame stamped, signed, and saved.'),
         ));
     } catch (e) {
       HapticFeedback.vibrate();
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(
-            backgroundColor: VP.danger,
-            content: Text('Capture failed: $e'),
-          ));
-      }
+      if (mounted) _showBlocked('Capture failed. $e');
     } finally {
       if (mounted) setState(() => _capturing = false);
     }
@@ -199,11 +280,14 @@ class _CameraScreenState extends State<CameraScreen>
 
   void _openLastShot() {
     final Uint8List? bytes = _lastThumb;
-    if (bytes == null) return;
+    if (bytes == null) {
+      _showBlocked('No frames in this session yet.');
+      return;
+    }
     HapticFeedback.selectionClick();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _LastShotPage(bytes: bytes, envelope: _lastEnvelope),
+        builder: (_) => _LastFramePage(bytes: bytes, envelope: _lastEnvelope),
       ),
     );
   }
@@ -212,33 +296,53 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
-    final Widget body;
-    if (_initializing) {
-      body = const _Booting();
-    } else if (_permissionError != null) {
-      body = _PermissionGate(error: _permissionError!, onRetry: _boot);
-    } else if (_error != null) {
-      body = _FatalError(message: _error!, onRetry: _boot);
-    } else {
-      body = _buildViewfinder();
+    if (_permissionError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Viewfinder')),
+        body: _PermissionGate(error: _permissionError!, onRetry: _boot),
+      );
+    }
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Viewfinder')),
+        body: _FatalError(message: _error!, onRetry: _boot),
+      );
     }
 
     return Scaffold(
-      backgroundColor: VP.bg,
       body: SafeArea(
-        top: false,
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Expanded(child: body),
-            _ControlBar(
+            _StatusReadout(
+              position: _livePosition,
+              stale: _fixIsStale,
+              torchOn: _torchOn,
+              onBack: () => Navigator.of(context).maybePop(),
+              onTorch: _toggleTorch,
+            ),
+            Expanded(child: _buildFeed()),
+            _StampCard(
+              site: _siteName,
+              position: _livePosition,
+              now: _now,
+            ),
+            if (_blockedReason != null)
+              AccentPanel(
+                accent: VP.signal,
+                background: VP.sand,
+                padding: const EdgeInsets.fromLTRB(
+                    VP.s12, VP.s8, VP.s12, VP.s8),
+                child: Text(_blockedReason!,
+                    style: VP.body.copyWith(fontSize: 13)),
+              ),
+            _ControlRow(
               thumb: _lastThumb,
               capturing: _capturing,
+              enabled: _fixIsUsable && !_initializing,
               canFlip: cameras.length > 1,
-              onGallery: _openLastShot,
-              onShutter:
-                  _initializing || _error != null || _permissionError != null
-                      ? null
-                      : _capture,
+              onThumb: _openLastShot,
+              onShutter: _capture,
               onFlip: _flipCamera,
             ),
           ],
@@ -247,18 +351,20 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  Widget _buildViewfinder() {
+  Widget _buildFeed() {
     final CameraController? controller = _camera.controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return const _Booting();
+    if (_initializing || controller == null || !controller.value.isInitialized) {
+      return const ColoredBox(
+        color: VP.sandDeep,
+        child: Center(child: Text('Starting camera', style: VP.dataSmall)),
+      );
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        ColoredBox(
-          color: Colors.black,
-          child: LayoutBuilder(
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final Size area =
                   Size(constraints.maxWidth, constraints.maxHeight);
@@ -266,125 +372,113 @@ class _CameraScreenState extends State<CameraScreen>
                 behavior: HitTestBehavior.opaque,
                 onTapDown: (TapDownDetails d) =>
                     _handleFocusTap(d.localPosition, area),
-                child: ClipRect(
-                  child: OverflowBox(
-                    maxWidth: double.infinity,
-                    maxHeight: double.infinity,
-                    child: FittedBox(
-                      fit: BoxFit.cover,
-                      child: SizedBox(
-                        width: area.width,
-                        height: area.width * controller.value.aspectRatio,
-                        child: CameraPreview(controller),
-                      ),
+                child: OverflowBox(
+                  maxWidth: double.infinity,
+                  maxHeight: double.infinity,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: area.width,
+                      height: area.width * controller.value.aspectRatio,
+                      child: CameraPreview(controller),
                     ),
                   ),
                 ),
               );
             },
           ),
-        ),
-
-        // Focus reticle.
-        if (_focusPoint != null)
-          AnimatedBuilder(
-            animation: _reticle,
-            builder: (BuildContext context, Widget? child) {
-              final double t = Curves.easeOut.transform(
-                  _reticle.value.clamp(0.0, 1.0));
-              return Positioned(
-                left: _focusPoint!.dx - 38,
-                top: _focusPoint!.dy - 38,
-                child: Opacity(
-                  opacity: 1.0 - (t * 0.35),
-                  child: Transform.scale(scale: 1.25 - (t * 0.25), child: child),
+          if (_focusPoint != null)
+            AnimatedBuilder(
+              animation: _reticle,
+              builder: (BuildContext context, Widget? child) {
+                final double t =
+                    Curves.easeOut.transform(_reticle.value.clamp(0.0, 1.0));
+                return Positioned(
+                  left: _focusPoint!.dx - 24,
+                  top: _focusPoint!.dy - 24,
+                  child: Opacity(opacity: 1 - (t * 0.4), child: child),
+                );
+              },
+              child: Container(
+                width: VP.minTouch,
+                height: VP.minTouch,
+                decoration: BoxDecoration(
+                  border: Border.all(color: VP.signal, width: 2),
+                  borderRadius: VP.br,
                 ),
-              );
-            },
-            child: Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white, width: 1.5),
-                borderRadius: BorderRadius.circular(6),
               ),
             ),
-          ),
-
-        // Top chrome: back + torch.
-        Positioned(
-          top: MediaQuery.of(context).padding.top + 6,
-          left: 10,
-          right: 10,
-          child: Row(
-            children: <Widget>[
-              _GlyphButton(
-                icon: Icons.arrow_back_rounded,
-                onTap: () => Navigator.of(context).maybePop(),
-              ),
-              const Spacer(),
-              _GlyphButton(
-                icon: _torchOn
-                    ? Icons.flashlight_on_rounded
-                    : Icons.flashlight_off_rounded,
-                active: _torchOn,
-                onTap: _toggleTorch,
-              ),
-            ],
-          ),
-        ),
-
-        // Live capture data.
-        Positioned(
-          left: 12,
-          right: 12,
-          bottom: 12,
-          child: _LiveReadout(position: _livePosition, nowUtc: _nowUtc),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
 // =======================================================================
-// Control bar
+// Status readout
 // =======================================================================
 
-class _ControlBar extends StatelessWidget {
-  const _ControlBar({
-    required this.thumb,
-    required this.capturing,
-    required this.canFlip,
-    required this.onGallery,
-    required this.onShutter,
-    required this.onFlip,
+/// Top of the viewfinder. Never hidden — a camera that silently loses GPS is
+/// worse than one that says so.
+class _StatusReadout extends StatelessWidget {
+  const _StatusReadout({
+    required this.position,
+    required this.stale,
+    required this.torchOn,
+    required this.onBack,
+    required this.onTorch,
   });
 
-  final Uint8List? thumb;
-  final bool capturing;
-  final bool canFlip;
-  final VoidCallback onGallery;
-  final VoidCallback? onShutter;
-  final VoidCallback onFlip;
+  final Position? position;
+  final bool stale;
+  final bool torchOn;
+  final VoidCallback onBack;
+  final VoidCallback onTorch;
 
   @override
   Widget build(BuildContext context) {
+    final Position? p = position;
+
+    final String text;
+    final Color color;
+    if (p == null) {
+      text = 'NO FIX — SEARCHING';
+      color = VP.signal;
+    } else if (stale) {
+      text = 'FIX ±${p.accuracy.round()}M — STALE';
+      color = VP.signal;
+    } else if (p.accuracy > _weakFixMetres) {
+      text = 'FIX ±${p.accuracy.round()}M — WEAK';
+      color = VP.signal;
+    } else {
+      text = 'FIX ±${p.accuracy.round()}M';
+      color = VP.forest;
+    }
+
     return Container(
-      height: 132,
-      width: double.infinity,
-      color: VP.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 28),
+      height: VP.minTouch,
+      padding: const EdgeInsets.symmetric(horizontal: VP.s4),
+      decoration: const BoxDecoration(
+        color: VP.sand,
+        border: Border(bottom: VP.hairline),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: <Widget>[
-          _GalleryButton(thumb: thumb, onTap: onGallery),
-          _ShutterButton(busy: capturing, onTap: onShutter),
-          Opacity(
-            opacity: canFlip ? 1 : 0.3,
-            child: _SquareButton(
-              icon: Icons.flip_camera_ios_outlined,
-              onTap: canFlip ? onFlip : null,
+          IconButton(
+            onPressed: onBack,
+            icon: const Icon(Icons.arrow_back, size: 20),
+            color: VP.ink,
+            tooltip: 'Back',
+          ),
+          Expanded(child: StatusText(text: text, color: color)),
+          IconButton(
+            onPressed: onTorch,
+            icon: Icon(
+              torchOn ? Icons.wb_sunny : Icons.wb_sunny_outlined,
+              size: 20,
             ),
+            color: torchOn ? VP.signal : VP.inkSoft,
+            tooltip: 'Torch',
           ),
         ],
       ),
@@ -392,9 +486,180 @@ class _ControlBar extends StatelessWidget {
   }
 }
 
-/// Bottom-left thumbnail of the last shot, like a stock camera app.
-class _GalleryButton extends StatelessWidget {
-  const _GalleryButton({required this.thumb, required this.onTap});
+// =======================================================================
+// Stamp card
+// =======================================================================
+
+/// Shows the values that will be burned into the next frame.
+class _StampCard extends StatelessWidget {
+  const _StampCard({
+    required this.site,
+    required this.position,
+    required this.now,
+  });
+
+  final String? site;
+  final Position? position;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final Position? p = position;
+
+    return AccentPanel(
+      accent: VP.signal,
+      padding: const EdgeInsets.all(VP.s12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            (site ?? 'Locating site').toUpperCase(),
+            style: VP.label.copyWith(color: VP.ink),
+          ),
+          const SizedBox(height: VP.s4),
+          Text(
+            p == null
+                ? '——.——————, ——.——————'
+                : '${p.latitude.toStringAsFixed(6)}, '
+                    '${p.longitude.toStringAsFixed(6)}  ${p.altitude.round()}M',
+            style: VP.data.copyWith(fontSize: 11, color: VP.inkSoft),
+          ),
+          const SizedBox(height: VP.s4),
+          Text(
+            DateFormat('ddMMMyy HH:mm').format(now).toUpperCase(),
+            style: VP.data.copyWith(fontSize: 11, color: VP.inkSoft),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =======================================================================
+// Control row
+// =======================================================================
+
+class _ControlRow extends StatelessWidget {
+  const _ControlRow({
+    required this.thumb,
+    required this.capturing,
+    required this.enabled,
+    required this.canFlip,
+    required this.onThumb,
+    required this.onShutter,
+    required this.onFlip,
+  });
+
+  final Uint8List? thumb;
+  final bool capturing;
+  final bool enabled;
+  final bool canFlip;
+  final VoidCallback onThumb;
+  final VoidCallback onShutter;
+  final VoidCallback onFlip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: VP.s16, vertical: VP.s12),
+      decoration: const BoxDecoration(
+        color: VP.sand,
+        border: Border(top: VP.hairline),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: <Widget>[
+          _FrameThumb(thumb: thumb, onTap: onThumb),
+          _Shutter(
+            enabled: enabled,
+            busy: capturing,
+            onTap: onShutter,
+          ),
+          _IconSquare(
+            icon: Icons.cameraswitch_outlined,
+            onTap: canFlip ? onFlip : null,
+            tooltip: 'Switch camera',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 44dp square shutter. Disabled state still accepts taps so it can explain
+/// itself rather than doing nothing.
+class _Shutter extends StatefulWidget {
+  const _Shutter({
+    required this.enabled,
+    required this.busy,
+    required this.onTap,
+  });
+
+  final bool enabled;
+  final bool busy;
+  final VoidCallback onTap;
+
+  @override
+  State<_Shutter> createState() => _ShutterState();
+}
+
+class _ShutterState extends State<_Shutter> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool live = widget.enabled && !widget.busy;
+
+    return Semantics(
+      button: true,
+      enabled: live,
+      label: 'Capture frame',
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTap: widget.busy ? null : widget.onTap,
+        // Touch target stays 48dp even though the control reads as 44dp.
+        child: SizedBox(
+          width: VP.minTouch + VP.s16,
+          height: VP.minTouch + VP.s16,
+          child: Center(
+            child: AnimatedScale(
+              scale: _pressed && live ? 0.96 : 1,
+              duration: const Duration(milliseconds: 90),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: !live
+                      ? VP.sandDeep
+                      : (_pressed ? VP.forestDeep : VP.forest),
+                  borderRadius: VP.br,
+                ),
+                child: widget.busy
+                    ? const Padding(
+                        padding: EdgeInsets.all(VP.s12),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: VP.paper),
+                      )
+                    : Icon(
+                        Icons.circle,
+                        size: 16,
+                        color: live ? VP.paper : VP.inkSoft,
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Thumbnail of the last frame — the way out to review what was just shot.
+class _FrameThumb extends StatelessWidget {
+  const _FrameThumb({required this.thumb, required this.onTap});
 
   final Uint8List? thumb;
   final VoidCallback onTap;
@@ -403,189 +668,78 @@ class _GalleryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final Uint8List? bytes = thumb;
 
-    return GestureDetector(
-      onTap: bytes == null ? null : onTap,
-      child: Container(
-        width: 54,
-        height: 54,
-        decoration: BoxDecoration(
-          color: VP.neutralSoft,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: VP.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: bytes == null
-            ? const Icon(Icons.photo_library_outlined,
-                size: 20, color: VP.inkFaint)
-            : Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true),
-      ),
-    );
-  }
-}
-
-class _ShutterButton extends StatelessWidget {
-  const _ShutterButton({required this.busy, required this.onTap});
-
-  final bool busy;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: busy ? null : onTap,
-      child: SizedBox(
-        width: 78,
-        height: 78,
-        child: Stack(
-          alignment: Alignment.center,
-          children: <Widget>[
-            Container(
-              width: 78,
-              height: 78,
+    return Semantics(
+      button: true,
+      label: 'Review last frame',
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          width: VP.minTouch + VP.s16,
+          height: VP.minTouch + VP.s16,
+          child: Center(
+            child: Container(
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: VP.border, width: 3),
+                color: VP.sandDeep,
+                border: Border.all(color: VP.rule),
+                borderRadius: VP.br,
               ),
+              clipBehavior: Clip.antiAlias,
+              child: bytes == null
+                  ? const Icon(Icons.photo_outlined,
+                      size: 20, color: VP.inkSoft)
+                  : Image.memory(bytes,
+                      fit: BoxFit.cover, gaplessPlayback: true),
             ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              width: busy ? 44 : 62,
-              height: busy ? 44 : 62,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: onTap == null ? VP.inkFaint : VP.primary,
-              ),
-            ),
-            if (busy)
-              const SizedBox(
-                width: 66,
-                height: 66,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2.5, color: VP.primary),
-              ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _SquareButton extends StatelessWidget {
-  const _SquareButton({required this.icon, this.onTap});
+class _IconSquare extends StatelessWidget {
+  const _IconSquare({required this.icon, this.onTap, this.tooltip});
 
   final IconData icon;
   final VoidCallback? onTap;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 54,
-        height: 54,
-        decoration: BoxDecoration(
-          color: VP.neutralSoft,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: VP.border),
-        ),
-        child: Icon(icon, size: 22, color: VP.ink),
-      ),
-    );
-  }
-}
-
-/// Round translucent button used over the live preview.
-class _GlyphButton extends StatelessWidget {
-  const _GlyphButton({
-    required this.icon,
-    required this.onTap,
-    this.active = false,
-  });
-
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: active ? Colors.white : Colors.black.withValues(alpha: 0.35),
-        ),
-        child: Icon(icon, size: 19, color: active ? VP.ink : Colors.white),
-      ),
-    );
-  }
-}
-
-// =======================================================================
-// Live readout
-// =======================================================================
-
-class _LiveReadout extends StatelessWidget {
-  const _LiveReadout({required this.position, required this.nowUtc});
-
-  final Position? position;
-  final DateTime nowUtc;
-
-  @override
-  Widget build(BuildContext context) {
-    final Position? p = position;
-    final bool locked = p != null;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: <Widget>[
-          Icon(
-            locked ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
-            size: 15,
-            color: locked ? const Color(0xFF4ADE80) : Colors.white70,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              locked
-                  ? '${p.latitude.toStringAsFixed(5)}, '
-                      '${p.longitude.toStringAsFixed(5)}   '
-                      '${p.altitude.toStringAsFixed(0)} m'
-                  : 'Acquiring GPS…',
-              style: const TextStyle(
-                fontFamily: VP.mono,
-                fontSize: 11.5,
-                color: Colors.white,
+    return Tooltip(
+      message: tooltip ?? '',
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          width: VP.minTouch + VP.s16,
+          height: VP.minTouch + VP.s16,
+          child: Center(
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: VP.paper,
+                border: Border.all(color: VP.rule),
+                borderRadius: VP.br,
               ),
+              child: Icon(icon,
+                  size: 20, color: onTap == null ? VP.rule : VP.ink),
             ),
           ),
-          Text(
-            '${DateFormat('HH:mm:ss').format(nowUtc)} UTC',
-            style: const TextStyle(
-              fontFamily: VP.mono,
-              fontSize: 11.5,
-              color: Colors.white70,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
 // =======================================================================
-// Last shot preview
+// Last frame review
 // =======================================================================
 
-class _LastShotPage extends StatelessWidget {
-  const _LastShotPage({required this.bytes, required this.envelope});
+class _LastFramePage extends StatelessWidget {
+  const _LastFramePage({required this.bytes, required this.envelope});
 
   final Uint8List bytes;
   final SignedEnvelope? envelope;
@@ -595,55 +749,46 @@ class _LastShotPage extends StatelessWidget {
     final SignedEnvelope? e = envelope;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Last capture')),
+      appBar: AppBar(title: const Text('Last frame')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+        padding: const EdgeInsets.fromLTRB(VP.s16, VP.s8, VP.s16, VP.s32),
         children: <Widget>[
-          ClipRRect(
-            borderRadius: VP.br,
+          Container(
+            decoration: BoxDecoration(border: Border.all(color: VP.rule)),
             child: ColoredBox(
-              color: Colors.black,
+              color: VP.sandDeep,
               child: InteractiveViewer(
                 maxScale: 5,
                 child: Image.memory(bytes, fit: BoxFit.contain),
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: VP.s24),
+          const SectionHead(title: 'Signed payload'),
+          const SizedBox(height: VP.s12),
           if (e != null)
-            AppCard(
+            FieldCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const Row(
-                    children: <Widget>[
-                      Expanded(child: Text('Signed payload', style: VP.h2)),
-                      Pill(
-                        label: 'Sealed',
-                        color: VP.success,
-                        icon: Icons.lock_outline_rounded,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  KvRow(
+                  DataLine(
                     label: 'Coordinates',
                     value: '${e.lat.toStringAsFixed(6)}, '
                         '${e.lon.toStringAsFixed(6)}',
                   ),
-                  KvRow(
+                  DataLine(
                       label: 'Altitude',
                       value: '${e.alt.toStringAsFixed(1)} m'),
-                  KvRow(
+                  DataLine(
                     label: 'Captured',
-                    value: '${DateFormat('yyyy-MM-dd HH:mm:ss').format(
+                    value: '${DateFormat('ddMMMyy HH:mm:ss').format(
                       DateTime.fromMillisecondsSinceEpoch(e.timestampMs,
                           isUtc: true),
-                    )} UTC',
+                    ).toUpperCase()} UTC',
                   ),
-                  KvRow(label: 'Device', value: e.deviceId),
-                  KvRow(label: 'Signing key', value: e.kid ?? '—'),
-                  KvRow(label: 'Banner hash', value: e.pixelHash),
+                  DataLine(label: 'Device', value: e.deviceId),
+                  DataLine(label: 'Signing key', value: e.kid ?? '—'),
+                  DataLine(label: 'Banner hash', value: e.pixelHash),
                 ],
               ),
             ),
@@ -654,26 +799,8 @@ class _LastShotPage extends StatelessWidget {
 }
 
 // =======================================================================
-// States
+// Blocking states
 // =======================================================================
-
-class _Booting extends StatelessWidget {
-  const _Booting();
-
-  @override
-  Widget build(BuildContext context) {
-    return const ColoredBox(
-      color: Colors.black,
-      child: Center(
-        child: SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-        ),
-      ),
-    );
-  }
-}
 
 class _PermissionGate extends StatelessWidget {
   const _PermissionGate({required this.error, required this.onRetry});
@@ -683,45 +810,34 @@ class _PermissionGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: AppCard(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Icon(Icons.lock_outline_rounded,
-                  size: 28, color: VP.primary),
-              const SizedBox(height: 14),
-              Text('${error.permissionName} access needed', style: VP.h2),
-              const SizedBox(height: 8),
-              Text(
-                error.permanentlyDenied
-                    ? 'This permission was permanently denied. Enable it in system '
-                        'settings, then come back.'
-                    : 'VeriPic needs this permission to stamp and sign photos.',
-                style: VP.body,
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: <Widget>[
-                  if (error.permanentlyDenied)
-                    const FilledButton(
-                      onPressed: openAppSettings,
-                      child: Text('Open settings'),
-                    )
-                  else
-                    FilledButton(
-                      onPressed: onRetry,
-                      child: const Text('Grant access'),
-                    ),
-                ],
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.all(VP.s16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          AccentPanel(
+            accent: VP.signal,
+            child: Text(
+              error.permanentlyDenied
+                  ? '${error.permissionName} access is turned off. Enable it in '
+                      'system settings to capture frames.'
+                  : '${error.permissionName} access is needed to stamp and sign '
+                      'frames.',
+              style: VP.body,
+            ),
           ),
-        ),
+          const SizedBox(height: VP.s24),
+          if (error.permanentlyDenied)
+            const FilledButton(
+              onPressed: openAppSettings,
+              child: Text('Open settings'),
+            )
+          else
+            FilledButton(
+              onPressed: onRetry,
+              child: Text('Allow ${error.permissionName.toLowerCase()}'),
+            ),
+        ],
       ),
     );
   }
@@ -735,26 +851,18 @@ class _FatalError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: AppCard(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Icon(Icons.error_outline_rounded,
-                  size: 28, color: VP.danger),
-              const SizedBox(height: 14),
-              const Text('Camera unavailable', style: VP.h2),
-              const SizedBox(height: 8),
-              Text(message, style: VP.body),
-              const SizedBox(height: 18),
-              FilledButton(onPressed: onRetry, child: const Text('Try again')),
-            ],
+    return Padding(
+      padding: const EdgeInsets.all(VP.s16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          AccentPanel(
+            accent: VP.signal,
+            child: Text('The camera did not start. $message', style: VP.body),
           ),
-        ),
+          const SizedBox(height: VP.s24),
+          FilledButton(onPressed: onRetry, child: const Text('Try again')),
+        ],
       ),
     );
   }

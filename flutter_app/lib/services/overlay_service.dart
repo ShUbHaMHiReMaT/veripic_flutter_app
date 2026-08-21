@@ -22,8 +22,17 @@ class OverlayService {
 
     final String latStr = 'Lat ${position.latitude.toStringAsFixed(6)} deg';
     final String longStr = 'Long ${position.longitude.toStringAsFixed(6)} deg';
+    // Format per the design system: `21AUG26 09:14`. The UTC offset is read
+    // from the device rather than hardcoded to a single region.
+    final DateTime local = timestamp.toLocal();
+    final Duration offset = local.timeZoneOffset;
+    final String sign = offset.isNegative ? '-' : '+';
+    final Duration abs = offset.abs();
+    final String offsetStr = '$sign${abs.inHours.toString().padLeft(2, '0')}:'
+        '${(abs.inMinutes % 60).toString().padLeft(2, '0')}';
     final String timeStr =
-        '${DateFormat('dd/MM/yy hh:mm a').format(timestamp.toLocal())} GMT+05:30';
+        '${DateFormat('ddMMMyy HH:mm').format(local).toUpperCase()} '
+        'UTC$offsetStr';
 
     final int width = originalImage.width;
     final int height = originalImage.height;
@@ -33,59 +42,73 @@ class OverlayService {
     // 1. Global Micro-Watermark Noise Across Whole Image
     _applyGlobalAntiAiGrid(originalImage);
 
-    // 2. Dark Translucent Overlay Banner
+    // 2. Stamp panel — sand at 92%. A panel, not a drop shadow: text with a
+    //    shadow alone fails on bright sky and on dark shed interiors.
     img.fillRect(
       originalImage,
       x1: 0,
       y1: bannerY,
       x2: width,
       y2: height,
-      color: img.ColorRgba8(0, 0, 0, 210),
+      color: img.ColorRgba8(240, 237, 228, 235),
     );
 
-    // 3. Dense Dual-Tone Anti-AI Pattern on Banner Zone
-    _drawAntiAiPattern(originalImage, bannerY, height, width);
+    // 3. Left accent bar, 3px of `signal`, scaled with the image so it stays
+    //    visible on a full-resolution frame.
+    final int barWidth = (width * 0.006).clamp(3, 24).toInt();
+    img.fillRect(
+      originalImage,
+      x1: 0,
+      y1: bannerY,
+      x2: barWidth,
+      y2: height,
+      color: img.ColorRgba8(224, 122, 47, 255),
+    );
 
-    final font = img.arial24;
-    int currentY = bannerY + 12;
+    // 4. Dual-tone anti-AI pattern, kept at full amplitude but confined to a
+    //    strip below the text so it never fights legibility.
+    final int patternTop = height - (bannerHeight * 0.18).toInt();
+    _drawAntiAiPattern(originalImage, patternTop, height, width);
 
+    // Stamp type is a percentage of image height, never a fixed px — scaling a
+    // screen-rendered overlay up produces soft, unusable text.
+    final double targetPx = height * 0.022;
+    final img.BitmapFont font = targetPx >= 36 ? img.arial48 : img.arial24;
+    final int lineStep = (font.lineHeight * 1.25).toInt();
+
+    final int left = barWidth + (width * 0.02).toInt();
+    int currentY = bannerY + (bannerHeight * 0.10).toInt();
+
+    // Line 1 — site name.
     img.drawString(
       originalImage,
-      'VeriPic GPS Camera  [SECURE-STAMP]',
+      addressText.toUpperCase(),
       font: font,
-      x: 25,
+      x: left,
       y: currentY,
-      color: img.ColorRgba8(0, 230, 150, 255),
+      color: img.ColorRgba8(30, 42, 34, 255), // ink
     );
-    currentY += 30;
+    currentY += lineStep;
 
-    img.drawString(
-      originalImage,
-      addressText,
-      font: font,
-      x: 25,
-      y: currentY,
-      color: img.ColorRgba8(255, 255, 255, 255),
-    );
-    currentY += 30;
-
+    // Line 2 — coordinates.
     img.drawString(
       originalImage,
       '$latStr   $longStr',
       font: font,
-      x: 25,
+      x: left,
       y: currentY,
-      color: img.ColorRgba8(220, 220, 220, 255),
+      color: img.ColorRgba8(90, 107, 95, 255), // ink-soft
     );
-    currentY += 30;
+    currentY += lineStep;
 
+    // Line 3 — date and time.
     img.drawString(
       originalImage,
       timeStr,
       font: font,
-      x: 25,
+      x: left,
       y: currentY,
-      color: img.ColorRgba8(200, 200, 200, 255),
+      color: img.ColorRgba8(90, 107, 95, 255), // ink-soft
     );
 
     return Uint8List.fromList(img.encodeJpg(originalImage, quality: 95));
