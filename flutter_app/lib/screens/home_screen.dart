@@ -15,17 +15,17 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(VP.s16, VP.s24, VP.s16, VP.s32),
+          padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceSection, Tokens.spaceBase, Tokens.spaceScreen),
           children: <Widget>[
-            const Text('VeriPic', style: VP.screenTitle),
-            const SizedBox(height: VP.s4),
+            const Text('VeriPic', style: Tokens.screenTitle),
+            const SizedBox(height: Tokens.spaceHair),
             const Text(
               'Every frame is stamped, signed, and checkable.',
-              style: VP.body,
+              style: Tokens.body,
             ),
-            const SizedBox(height: VP.s32),
+            const SizedBox(height: Tokens.spaceScreen),
             const SectionHead(title: 'Capture'),
-            const SizedBox(height: VP.s12),
+            const SizedBox(height: Tokens.spaceSnug),
             LogRow(
               title: 'Open viewfinder',
               lines: const <String>['STAMP + SIGN + LOG'],
@@ -37,7 +37,7 @@ class HomeScreen extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: VP.s8),
+            const SizedBox(height: Tokens.spaceTight),
             LogRow(
               title: 'Check a frame',
               lines: const <String>['PAYLOAD + HMAC + DRIFT + AI'],
@@ -49,9 +49,9 @@ class HomeScreen extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: VP.s32),
+            const SizedBox(height: Tokens.spaceScreen),
             const SectionHead(title: 'This device'),
-            const SizedBox(height: VP.s12),
+            const SizedBox(height: Tokens.spaceSnug),
             const _DeviceCard(),
           ],
         ),
@@ -91,24 +91,24 @@ class _DeviceCardState extends State<_DeviceCard> {
 
         if (snap.hasError) {
           return const AccentPanel(
-            accent: VP.signal,
+            accent: Tokens.statusAlert,
             child: Text(
               'Device identity could not be read. Restart the app to retry.',
-              style: VP.body,
+              style: Tokens.body,
             ),
           );
         }
 
         if (id == null) {
           return const FieldCard(
-            child: Text('Reading hardware identity', style: VP.body),
+            child: Text('Reading hardware identity', style: Tokens.body),
           );
         }
 
         final bool fallback = id.fingerprint.usedFallback;
 
         return FieldCard(
-          padding: const EdgeInsets.fromLTRB(VP.s16, VP.s16, VP.s16, VP.s8),
+          padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceBase, Tokens.spaceBase, Tokens.spaceTight),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -116,30 +116,30 @@ class _DeviceCardState extends State<_DeviceCard> {
                 children: <Widget>[
                   Expanded(
                     child: Text(id.fingerprint.label.toUpperCase(),
-                        style: VP.label.copyWith(color: VP.ink)),
+                        style: Tokens.label.copyWith(color: Tokens.textPrimary)),
                   ),
                   StatusText(
                     text: fallback ? 'KEY FALLBACK' : 'KEY BOUND',
-                    color: fallback ? VP.signal : VP.forest,
+                    color: fallback ? Tokens.statusAlert : Tokens.actionPrimary,
                   ),
                 ],
               ),
-              const SizedBox(height: VP.s12),
+              const SizedBox(height: Tokens.spaceSnug),
               DataLine(label: 'Device', value: id.fingerprint.shortId),
               DataLine(
                 label: 'Signing key',
                 value: id.keys['Active key id'] ?? '—',
               ),
               if (fallback) ...<Widget>[
-                const SizedBox(height: VP.s8),
-                AccentPanel(
-                  accent: VP.signal,
-                  background: VP.sand,
+                const SizedBox(height: Tokens.spaceTight),
+                const AccentPanel(
+                  accent: Tokens.statusAlert,
+                  background: Tokens.background,
                   child: Text(
                     'No hardware identifier available, so the key is bound to a '
                     'stored fallback. Frames signed here stay valid on this '
                     'install only.',
-                    style: VP.body.copyWith(fontSize: 13),
+                    style: Tokens.body,
                   ),
                 ),
               ],
@@ -150,15 +150,15 @@ class _DeviceCardState extends State<_DeviceCard> {
                     : CrossFadeState.showFirst,
                 firstChild: const SizedBox(width: double.infinity),
                 secondChild: Padding(
-                  padding: const EdgeInsets.only(top: VP.s8),
+                  padding: const EdgeInsets.only(top: Tokens.spaceTight),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      const Divider(height: VP.s16, color: VP.rule),
+                      const Divider(height: Tokens.spaceBase, color: Tokens.borderHairline),
                       for (final MapEntry<String, String> e
                           in id.fingerprint.attributes.entries)
                         DataLine(label: e.key, value: e.value),
-                      const Divider(height: VP.s16, color: VP.rule),
+                      const Divider(height: Tokens.spaceBase, color: Tokens.borderHairline),
                       for (final MapEntry<String, String> e in id.keys.entries)
                         DataLine(label: e.key, value: e.value),
                     ],
@@ -173,14 +173,14 @@ class _DeviceCardState extends State<_DeviceCard> {
                     setState(() => _expanded = !_expanded);
                   },
                   style: TextButton.styleFrom(
-                    foregroundColor: VP.forest,
-                    padding: const EdgeInsets.symmetric(horizontal: VP.s4),
-                    minimumSize: const Size(0, VP.minTouch),
+                    foregroundColor: Tokens.actionPrimary,
+                    padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceHair),
+                    minimumSize: const Size(0, Tokens.touchMin),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   child: Text(
                     _expanded ? 'Hide details' : 'Show details',
-                    style: VP.label.copyWith(color: VP.forest),
+                    style: Tokens.label.copyWith(color: Tokens.actionPrimary),
                   ),
                 ),
               ),

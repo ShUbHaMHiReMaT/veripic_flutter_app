@@ -98,36 +98,36 @@ class _VerifyScreenState extends State<VerifyScreen> {
     HapticFeedback.selectionClick();
     final ImageSource? source = await showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: VP.paper,
+      backgroundColor: Tokens.surfaceRaised,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(VP.radius)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Tokens.radiusControl)),
       ),
       builder: (BuildContext context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const SizedBox(height: VP.s16),
+            const SizedBox(height: Tokens.spaceBase),
             const Padding(
-              padding: EdgeInsets.symmetric(horizontal: VP.s16),
-              child: Text('SELECT A FRAME', style: VP.sectionHead),
+              padding: EdgeInsets.symmetric(horizontal: Tokens.spaceBase),
+              child: Text('SELECT A FRAME', style: Tokens.sectionHead),
             ),
-            const SizedBox(height: VP.s8),
-            const Divider(height: 1, color: VP.rule),
+            const SizedBox(height: Tokens.spaceTight),
+            const Divider(height: 1, color: Tokens.borderHairline),
             ListTile(
-              minVerticalPadding: VP.s12,
-              leading: const Icon(Icons.folder_outlined, color: VP.forest),
-              title: const Text('Choose from gallery', style: VP.body),
+              minVerticalPadding: Tokens.spaceSnug,
+              leading: const Icon(Icons.folder_outlined, color: Tokens.actionPrimary),
+              title: const Text('Choose from gallery', style: Tokens.body),
               onTap: () => Navigator.of(context).pop(ImageSource.gallery),
             ),
-            const Divider(height: 1, color: VP.rule),
+            const Divider(height: 1, color: Tokens.borderHairline),
             ListTile(
-              minVerticalPadding: VP.s12,
+              minVerticalPadding: Tokens.spaceSnug,
               leading:
-                  const Icon(Icons.photo_camera_outlined, color: VP.forest),
-              title: const Text('Take a photo', style: VP.body),
+                  const Icon(Icons.photo_camera_outlined, color: Tokens.actionPrimary),
+              title: const Text('Take a photo', style: Tokens.body),
               onTap: () => Navigator.of(context).pop(ImageSource.camera),
             ),
-            const SizedBox(height: VP.s8),
+            const SizedBox(height: Tokens.spaceTight),
           ],
         ),
       ),
@@ -148,44 +148,44 @@ class _VerifyScreenState extends State<VerifyScreen> {
           ? _EmptyState(onPick: _chooseSource)
           : ListView(
               padding:
-                  const EdgeInsets.fromLTRB(VP.s16, VP.s8, VP.s16, VP.s32),
+                  const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceTight, Tokens.spaceBase, Tokens.spaceScreen),
               children: <Widget>[
                 if (preview != null) ...<Widget>[
                   Container(
                     decoration:
-                        BoxDecoration(border: Border.all(color: VP.rule)),
+                        BoxDecoration(border: Border.all(color: Tokens.borderHairline)),
                     child: ColoredBox(
-                      color: VP.sandDeep,
+                      color: Tokens.surfaceInset,
                       child: AspectRatio(
                         aspectRatio: 4 / 3,
                         child: Image.memory(preview, fit: BoxFit.contain),
                       ),
                     ),
                   ),
-                  const SizedBox(height: VP.s24),
+                  const SizedBox(height: Tokens.spaceSection),
                 ],
                 if (report != null) ...<Widget>[
                   _Verdict(report: report),
-                  const SizedBox(height: VP.s24),
+                  const SizedBox(height: Tokens.spaceSection),
                 ],
                 const SectionHead(title: 'Checks'),
-                const SizedBox(height: VP.s12),
+                const SizedBox(height: Tokens.spaceSnug),
                 _Checklist(stages: _stages),
                 if (report != null) ...<Widget>[
-                  const SizedBox(height: VP.s24),
+                  const SizedBox(height: Tokens.spaceSection),
                   const SectionHead(title: 'Findings'),
-                  const SizedBox(height: VP.s12),
+                  const SizedBox(height: Tokens.spaceSnug),
                   _DriftCard(report: report),
                   if (report.aiAnalysis != null) ...<Widget>[
-                    const SizedBox(height: VP.s8),
+                    const SizedBox(height: Tokens.spaceTight),
                     _AiCard(analysis: report.aiAnalysis!),
                   ],
                   if (report.envelope != null) ...<Widget>[
-                    const SizedBox(height: VP.s8),
+                    const SizedBox(height: Tokens.spaceTight),
                     _MetadataDrawer(report: report),
                   ],
                 ],
-                const SizedBox(height: VP.s24),
+                const SizedBox(height: Tokens.spaceSection),
                 OutlinedButton(
                   onPressed: _busy ? null : _chooseSource,
                   child: Text(_busy ? 'Checking' : 'Check another frame'),
@@ -221,18 +221,18 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(VP.s16),
+      padding: const EdgeInsets.all(Tokens.spaceBase),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Text('No frame selected yet.', style: VP.body),
-          const SizedBox(height: VP.s8),
+          const Text('No frame selected yet.', style: Tokens.body),
+          const SizedBox(height: Tokens.spaceTight),
           const Text(
             'Pick an image and VeriPic will recover its payload, validate the '
             'signature, measure stamp drift, and screen it for AI generation.',
-            style: VP.body,
+            style: Tokens.body,
           ),
-          const SizedBox(height: VP.s24),
+          const SizedBox(height: Tokens.spaceSection),
           FilledButton(
             onPressed: onPick,
             child: const Text('Select a frame'),
@@ -255,11 +255,11 @@ class _Checklist extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FieldCard(
-      padding: const EdgeInsets.symmetric(horizontal: VP.s12),
+      padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceSnug),
       child: Column(
         children: <Widget>[
           for (int i = 0; i < VerifyStage.values.length; i++) ...<Widget>[
-            if (i > 0) const Divider(height: 1, color: VP.rule),
+            if (i > 0) const Divider(height: 1, color: Tokens.borderHairline),
             _StageRow(
               index: i + 1,
               stage: VerifyStage.values[i],
@@ -288,26 +288,25 @@ class _StageRow extends StatelessWidget {
     final bool pending = info.state == StageState.pending;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: VP.s12),
+      padding: const EdgeInsets.symmetric(vertical: Tokens.spaceSnug),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           _StageMark(state: info.state, index: index),
-          const SizedBox(width: VP.s12),
+          const SizedBox(width: Tokens.spaceSnug),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
                   stage.title,
-                  style: VP.body.copyWith(
-                    fontSize: 14,
-                    color: pending ? VP.inkSoft : VP.ink,
+                  style: Tokens.body.copyWith(
+                    color: pending ? Tokens.textSecondary : Tokens.textPrimary,
                   ),
                 ),
                 if (info.detail != null) ...<Widget>[
-                  const SizedBox(height: VP.s4),
-                  Text(info.detail!, style: VP.dataSmall),
+                  const SizedBox(height: Tokens.spaceHair),
+                  Text(info.detail!, style: Tokens.dataSmall),
                 ],
               ],
             ),
@@ -329,11 +328,11 @@ class _StageMark extends StatelessWidget {
   Widget build(BuildContext context) {
     if (state == StageState.running) {
       return const SizedBox(
-        width: VP.s24,
-        height: VP.s24,
+        width: Tokens.spaceSection,
+        height: Tokens.spaceSection,
         child: Padding(
-          padding: EdgeInsets.all(VP.s4),
-          child: CircularProgressIndicator(strokeWidth: 2, color: VP.forest),
+          padding: EdgeInsets.all(Tokens.spaceHair),
+          child: CircularProgressIndicator(strokeWidth: 2, color: Tokens.actionPrimary),
         ),
       );
     }
@@ -342,32 +341,32 @@ class _StageMark extends StatelessWidget {
     late final Widget mark;
     switch (state) {
       case StageState.pending:
-        color = VP.rule;
-        mark = Text('$index', style: VP.dataSmall);
+        color = Tokens.borderHairline;
+        mark = Text('$index', style: Tokens.dataSmall);
       case StageState.passed:
-        color = VP.forest;
-        mark = const Icon(Icons.check, size: 14, color: VP.forest);
+        color = Tokens.actionPrimary;
+        mark = const Icon(Icons.check, size: 14, color: Tokens.actionPrimary);
       case StageState.failed:
-        color = VP.signal;
-        mark = const Icon(Icons.close, size: 14, color: VP.signal);
+        color = Tokens.statusAlert;
+        mark = const Icon(Icons.close, size: 14, color: Tokens.statusAlert);
       case StageState.warned:
-        color = VP.signal;
-        mark = const Icon(Icons.priority_high, size: 14, color: VP.signal);
+        color = Tokens.statusAlert;
+        mark = const Icon(Icons.priority_high, size: 14, color: Tokens.statusAlert);
       case StageState.skipped:
-        color = VP.rule;
-        mark = const Icon(Icons.remove, size: 14, color: VP.inkSoft);
+        color = Tokens.borderHairline;
+        mark = const Icon(Icons.remove, size: 14, color: Tokens.textSecondary);
       case StageState.running:
-        color = VP.rule;
+        color = Tokens.borderHairline;
         mark = const SizedBox.shrink();
     }
 
     return Container(
-      width: VP.s24,
-      height: VP.s24,
+      width: Tokens.spaceSection,
+      height: Tokens.spaceSection,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         border: Border.all(color: color),
-        borderRadius: VP.br,
+        borderRadius: Tokens.brControl,
       ),
       child: mark,
     );
@@ -390,25 +389,25 @@ class _Verdict extends StatelessWidget {
 
     switch (report.verdict) {
       case VerificationVerdict.authentic:
-        accent = VP.forest;
+        accent = Tokens.actionPrimary;
         headline = 'AUTHENTIC';
       case VerificationVerdict.tamperedPixels:
-        accent = VP.signal;
+        accent = Tokens.statusAlert;
         headline = 'STAMP EDITED';
       case VerificationVerdict.tamperedMetadata:
-        accent = VP.signal;
+        accent = Tokens.statusAlert;
         headline = 'SIGNATURE MISMATCH';
       case VerificationVerdict.notSigned:
-        accent = VP.signal;
+        accent = Tokens.statusAlert;
         headline = 'NOT SIGNED BY VERIPIC';
       case VerificationVerdict.error:
-        accent = VP.signal;
+        accent = Tokens.statusAlert;
         headline = 'CHECK INCOMPLETE';
     }
 
     return AccentPanel(
       accent: accent,
-      padding: const EdgeInsets.all(VP.s16),
+      padding: const EdgeInsets.all(Tokens.spaceBase),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -418,18 +417,18 @@ class _Verdict extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(headline,
-                    style: VP.screenTitle.copyWith(fontSize: 18)),
+                    style: Tokens.screenTitle),
               ),
               Text(
                 '${(report.confidence * 100).round()}%',
-                style: VP.data.copyWith(fontSize: 18, color: accent),
+                style: Tokens.data.copyWith(color: accent),
               ),
             ],
           ),
-          const SizedBox(height: VP.s4),
-          const Text('CONFIDENCE', style: VP.dataSmall),
-          const SizedBox(height: VP.s12),
-          Text(report.reason, style: VP.body.copyWith(fontSize: 14)),
+          const SizedBox(height: Tokens.spaceHair),
+          const Text('CONFIDENCE', style: Tokens.dataSmall),
+          const SizedBox(height: Tokens.spaceSnug),
+          Text(report.reason, style: Tokens.body),
         ],
       ),
     );
@@ -450,7 +449,7 @@ class _DriftCard extends StatelessWidget {
     const int threshold = SecurityService.maxPerceptualHammingDistance;
     final int d = report.hammingDistance;
     final bool within = d <= threshold;
-    final Color color = within ? VP.forest : VP.signal;
+    final Color color = within ? Tokens.actionPrimary : Tokens.statusAlert;
     final SignatureCheck? check = report.signatureCheck;
 
     return FieldCard(
@@ -461,7 +460,7 @@ class _DriftCard extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text('STAMP DRIFT',
-                    style: VP.label.copyWith(color: VP.ink)),
+                    style: Tokens.label.copyWith(color: Tokens.textPrimary)),
               ),
               StatusText(
                 text: within ? 'WITHIN TOLERANCE' : 'OVER TOLERANCE',
@@ -469,10 +468,10 @@ class _DriftCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: VP.s12),
+          const SizedBox(height: Tokens.spaceSnug),
           // Bar reads as a gauge: filled portion is measured drift.
           SizedBox(
-            height: VP.s8,
+            height: Tokens.spaceTight,
             child: Row(
               children: <Widget>[
                 Expanded(
@@ -481,20 +480,20 @@ class _DriftCard extends StatelessWidget {
                 ),
                 Expanded(
                   flex: 64 - d.clamp(0, 64),
-                  child: const ColoredBox(color: VP.sandDeep),
+                  child: const ColoredBox(color: Tokens.surfaceInset),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: VP.s8),
+          const SizedBox(height: Tokens.spaceTight),
           Text('HAMMING $d / 64 — TOLERANCE $threshold',
-              style: VP.dataSmall),
+              style: Tokens.dataSmall),
           if (check != null) ...<Widget>[
-            const Divider(height: VP.s24, color: VP.rule),
+            const Divider(height: Tokens.spaceSection, color: Tokens.borderHairline),
             DataLine(
               label: 'Signature',
               value: check.valid ? 'VALID' : 'INVALID',
-              valueColor: check.valid ? VP.forest : VP.signal,
+              valueColor: check.valid ? Tokens.actionPrimary : Tokens.statusAlert,
               copyable: false,
             ),
             if (check.matchedKey != null)
@@ -504,8 +503,8 @@ class _DriftCard extends StatelessWidget {
                 copyable: false,
               ),
             if (check.note != null) ...<Widget>[
-              const SizedBox(height: VP.s4),
-              Text(check.note!, style: VP.body.copyWith(fontSize: 13)),
+              const SizedBox(height: Tokens.spaceHair),
+              Text(check.note!, style: Tokens.body),
             ],
           ],
         ],
@@ -528,7 +527,7 @@ class _AiCard extends StatelessWidget {
     final double? score = analysis.syntheticScore;
     final bool unavailable = analysis.error != null || score == null;
     final Color color =
-        unavailable ? VP.inkSoft : (score > 0.5 ? VP.signal : VP.forest);
+        unavailable ? Tokens.textSecondary : (score > 0.5 ? Tokens.statusAlert : Tokens.actionPrimary);
 
     return FieldCard(
       child: Column(
@@ -538,7 +537,7 @@ class _AiCard extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text('AI SCREENING',
-                    style: VP.label.copyWith(color: VP.ink)),
+                    style: Tokens.label.copyWith(color: Tokens.textPrimary)),
               ),
               StatusText(
                 text: unavailable
@@ -548,12 +547,12 @@ class _AiCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: VP.s8),
+          const SizedBox(height: Tokens.spaceTight),
           Text(
             analysis.error ??
                 analysis.summary ??
                 'The model returned no commentary.',
-            style: VP.body.copyWith(fontSize: 13),
+            style: Tokens.body,
           ),
         ],
       ),
@@ -584,7 +583,7 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
         DateTime.fromMillisecondsSinceEpoch(e.timestampMs, isUtc: true);
 
     return FieldCard(
-      padding: const EdgeInsets.symmetric(horizontal: VP.s16),
+      padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceBase),
       child: Column(
         children: <Widget>[
           InkWell(
@@ -593,16 +592,16 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
               setState(() => _open = !_open);
             },
             child: Container(
-              constraints: const BoxConstraints(minHeight: VP.minTouch),
+              constraints: const BoxConstraints(minHeight: Tokens.touchMin),
               alignment: Alignment.centerLeft,
               child: Row(
                 children: <Widget>[
                   Expanded(
                     child: Text('EMBEDDED METADATA',
-                        style: VP.label.copyWith(color: VP.ink)),
+                        style: Tokens.label.copyWith(color: Tokens.textPrimary)),
                   ),
                   Icon(_open ? Icons.expand_less : Icons.expand_more,
-                      size: 20, color: VP.inkSoft),
+                      size: 20, color: Tokens.textSecondary),
                 ],
               ),
             ),
@@ -613,12 +612,12 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
                 _open ? CrossFadeState.showSecond : CrossFadeState.showFirst,
             firstChild: const SizedBox(width: double.infinity),
             secondChild: Padding(
-              padding: const EdgeInsets.only(bottom: VP.s12),
+              padding: const EdgeInsets.only(bottom: Tokens.spaceSnug),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const Divider(height: 1, color: VP.rule),
-                  const SizedBox(height: VP.s8),
+                  const Divider(height: 1, color: Tokens.borderHairline),
+                  const SizedBox(height: Tokens.spaceTight),
                   DataLine(
                     label: 'Coordinates',
                     value: '${e.lat.toStringAsFixed(6)}, '
@@ -640,8 +639,8 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
                       label: 'Recomputed',
                       value: widget.report.recomputedHash!,
                       valueColor: widget.report.recomputedHash == e.pixelHash
-                          ? VP.forest
-                          : VP.signal,
+                          ? Tokens.actionPrimary
+                          : Tokens.statusAlert,
                     ),
                   DataLine(label: 'Signature', value: e.signature),
                 ],

@@ -24,7 +24,7 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
     statusBarBrightness: Brightness.light,
-    systemNavigationBarColor: VP.sand,
+    systemNavigationBarColor: Tokens.background,
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const VeriPicApp());
@@ -38,7 +38,7 @@ class VeriPicApp extends StatelessWidget {
     return MaterialApp(
       title: 'VeriPic',
       debugShowCheckedModeBanner: false,
-      theme: VP.theme(),
+      theme: Tokens.theme(),
       home: const HomeScreen(),
     );
   }

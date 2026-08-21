@@ -329,12 +329,12 @@ class _CameraScreenState extends State<CameraScreen>
             ),
             if (_blockedReason != null)
               AccentPanel(
-                accent: VP.signal,
-                background: VP.sand,
+                accent: Tokens.statusAlert,
+                background: Tokens.background,
                 padding: const EdgeInsets.fromLTRB(
-                    VP.s12, VP.s8, VP.s12, VP.s8),
+                    Tokens.spaceSnug, Tokens.spaceTight, Tokens.spaceSnug, Tokens.spaceTight),
                 child: Text(_blockedReason!,
-                    style: VP.body.copyWith(fontSize: 13)),
+                    style: Tokens.body),
               ),
             _ControlRow(
               thumb: _lastThumb,
@@ -355,8 +355,8 @@ class _CameraScreenState extends State<CameraScreen>
     final CameraController? controller = _camera.controller;
     if (_initializing || controller == null || !controller.value.isInitialized) {
       return const ColoredBox(
-        color: VP.sandDeep,
-        child: Center(child: Text('Starting camera', style: VP.dataSmall)),
+        color: Tokens.surfaceInset,
+        child: Center(child: Text('Starting camera', style: Tokens.dataSmall)),
       );
     }
 
@@ -400,11 +400,11 @@ class _CameraScreenState extends State<CameraScreen>
                 );
               },
               child: Container(
-                width: VP.minTouch,
-                height: VP.minTouch,
+                width: Tokens.touchMin,
+                height: Tokens.touchMin,
                 decoration: BoxDecoration(
-                  border: Border.all(color: VP.signal, width: 2),
-                  borderRadius: VP.br,
+                  border: Border.all(color: Tokens.statusAlert, width: 2),
+                  borderRadius: Tokens.brControl,
                 ),
               ),
             ),
@@ -443,31 +443,31 @@ class _StatusReadout extends StatelessWidget {
     final Color color;
     if (p == null) {
       text = 'NO FIX — SEARCHING';
-      color = VP.signal;
+      color = Tokens.statusAlert;
     } else if (stale) {
       text = 'FIX ±${p.accuracy.round()}M — STALE';
-      color = VP.signal;
+      color = Tokens.statusAlert;
     } else if (p.accuracy > _weakFixMetres) {
       text = 'FIX ±${p.accuracy.round()}M — WEAK';
-      color = VP.signal;
+      color = Tokens.statusAlert;
     } else {
       text = 'FIX ±${p.accuracy.round()}M';
-      color = VP.forest;
+      color = Tokens.actionPrimary;
     }
 
     return Container(
-      height: VP.minTouch,
-      padding: const EdgeInsets.symmetric(horizontal: VP.s4),
+      height: Tokens.touchMin,
+      padding: const EdgeInsets.symmetric(horizontal: Tokens.spaceHair),
       decoration: const BoxDecoration(
-        color: VP.sand,
-        border: Border(bottom: VP.hairline),
+        color: Tokens.background,
+        border: Border(bottom: Tokens.sideHairline),
       ),
       child: Row(
         children: <Widget>[
           IconButton(
             onPressed: onBack,
-            icon: const Icon(Icons.arrow_back, size: 20),
-            color: VP.ink,
+            icon: const Icon(Icons.arrow_back, size: Tokens.iconBase),
+            color: Tokens.textPrimary,
             tooltip: 'Back',
           ),
           Expanded(child: StatusText(text: text, color: color)),
@@ -475,9 +475,9 @@ class _StatusReadout extends StatelessWidget {
             onPressed: onTorch,
             icon: Icon(
               torchOn ? Icons.wb_sunny : Icons.wb_sunny_outlined,
-              size: 20,
+              size: Tokens.iconBase,
             ),
-            color: torchOn ? VP.signal : VP.inkSoft,
+            color: torchOn ? Tokens.statusAlert : Tokens.textSecondary,
             tooltip: 'Torch',
           ),
         ],
@@ -507,27 +507,27 @@ class _StampCard extends StatelessWidget {
     final Position? p = position;
 
     return AccentPanel(
-      accent: VP.signal,
-      padding: const EdgeInsets.all(VP.s12),
+      accent: Tokens.statusAlert,
+      padding: const EdgeInsets.all(Tokens.spaceSnug),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
             (site ?? 'Locating site').toUpperCase(),
-            style: VP.label.copyWith(color: VP.ink),
+            style: Tokens.label.copyWith(color: Tokens.textPrimary),
           ),
-          const SizedBox(height: VP.s4),
+          const SizedBox(height: Tokens.spaceHair),
           Text(
             p == null
                 ? '——.——————, ——.——————'
                 : '${p.latitude.toStringAsFixed(6)}, '
                     '${p.longitude.toStringAsFixed(6)}  ${p.altitude.round()}M',
-            style: VP.data.copyWith(fontSize: 11, color: VP.inkSoft),
+            style: Tokens.dataStamp,
           ),
-          const SizedBox(height: VP.s4),
+          const SizedBox(height: Tokens.spaceHair),
           Text(
             DateFormat('ddMMMyy HH:mm').format(now).toUpperCase(),
-            style: VP.data.copyWith(fontSize: 11, color: VP.inkSoft),
+            style: Tokens.dataStamp,
           ),
         ],
       ),
@@ -562,10 +562,10 @@ class _ControlRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: VP.s16, vertical: VP.s12),
+          horizontal: Tokens.spaceBase, vertical: Tokens.spaceSnug),
       decoration: const BoxDecoration(
-        color: VP.sand,
-        border: Border(top: VP.hairline),
+        color: Tokens.background,
+        border: Border(top: Tokens.sideHairline),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -622,31 +622,31 @@ class _ShutterState extends State<_Shutter> {
         onTap: widget.busy ? null : widget.onTap,
         // Touch target stays 48dp even though the control reads as 44dp.
         child: SizedBox(
-          width: VP.minTouch + VP.s16,
-          height: VP.minTouch + VP.s16,
+          width: Tokens.touchMin + Tokens.spaceBase,
+          height: Tokens.touchMin + Tokens.spaceBase,
           child: Center(
             child: AnimatedScale(
               scale: _pressed && live ? 0.96 : 1,
               duration: const Duration(milliseconds: 90),
               child: Container(
-                width: 44,
-                height: 44,
+                width: Tokens.controlSize,
+                height: Tokens.controlSize,
                 decoration: BoxDecoration(
                   color: !live
-                      ? VP.sandDeep
-                      : (_pressed ? VP.forestDeep : VP.forest),
-                  borderRadius: VP.br,
+                      ? Tokens.surfaceInset
+                      : (_pressed ? Tokens.actionPrimaryPressed : Tokens.actionPrimary),
+                  borderRadius: Tokens.brControl,
                 ),
                 child: widget.busy
                     ? const Padding(
-                        padding: EdgeInsets.all(VP.s12),
+                        padding: EdgeInsets.all(Tokens.spaceSnug),
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: VP.paper),
+                            strokeWidth: 2, color: Tokens.surfaceRaised),
                       )
                     : Icon(
                         Icons.circle,
-                        size: 16,
-                        color: live ? VP.paper : VP.inkSoft,
+                        size: Tokens.iconSmall,
+                        color: live ? Tokens.surfaceRaised : Tokens.textSecondary,
                       ),
               ),
             ),
@@ -674,21 +674,21 @@ class _FrameThumb extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
-          width: VP.minTouch + VP.s16,
-          height: VP.minTouch + VP.s16,
+          width: Tokens.touchMin + Tokens.spaceBase,
+          height: Tokens.touchMin + Tokens.spaceBase,
           child: Center(
             child: Container(
-              width: 56,
-              height: 56,
+              width: Tokens.thumbSize,
+              height: Tokens.thumbSize,
               decoration: BoxDecoration(
-                color: VP.sandDeep,
-                border: Border.all(color: VP.rule),
-                borderRadius: VP.br,
+                color: Tokens.surfaceInset,
+                border: Border.all(color: Tokens.borderHairline),
+                borderRadius: Tokens.brControl,
               ),
               clipBehavior: Clip.antiAlias,
               child: bytes == null
                   ? const Icon(Icons.photo_outlined,
-                      size: 20, color: VP.inkSoft)
+                      size: 20, color: Tokens.textSecondary)
                   : Image.memory(bytes,
                       fit: BoxFit.cover, gaplessPlayback: true),
             ),
@@ -713,19 +713,19 @@ class _IconSquare extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
-          width: VP.minTouch + VP.s16,
-          height: VP.minTouch + VP.s16,
+          width: Tokens.touchMin + Tokens.spaceBase,
+          height: Tokens.touchMin + Tokens.spaceBase,
           child: Center(
             child: Container(
-              width: 44,
-              height: 44,
+              width: Tokens.controlSize,
+              height: Tokens.controlSize,
               decoration: BoxDecoration(
-                color: VP.paper,
-                border: Border.all(color: VP.rule),
-                borderRadius: VP.br,
+                color: Tokens.surfaceRaised,
+                border: Border.all(color: Tokens.borderHairline),
+                borderRadius: Tokens.brControl,
               ),
               child: Icon(icon,
-                  size: 20, color: onTap == null ? VP.rule : VP.ink),
+                  size: Tokens.iconBase, color: onTap == null ? Tokens.borderHairline : Tokens.textPrimary),
             ),
           ),
         ),
@@ -751,21 +751,21 @@ class _LastFramePage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Last frame')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(VP.s16, VP.s8, VP.s16, VP.s32),
+        padding: const EdgeInsets.fromLTRB(Tokens.spaceBase, Tokens.spaceTight, Tokens.spaceBase, Tokens.spaceScreen),
         children: <Widget>[
           Container(
-            decoration: BoxDecoration(border: Border.all(color: VP.rule)),
+            decoration: BoxDecoration(border: Border.all(color: Tokens.borderHairline)),
             child: ColoredBox(
-              color: VP.sandDeep,
+              color: Tokens.surfaceInset,
               child: InteractiveViewer(
-                maxScale: 5,
+                maxScale: Tokens.zoomMaxScale,
                 child: Image.memory(bytes, fit: BoxFit.contain),
               ),
             ),
           ),
-          const SizedBox(height: VP.s24),
+          const SizedBox(height: Tokens.spaceSection),
           const SectionHead(title: 'Signed payload'),
-          const SizedBox(height: VP.s12),
+          const SizedBox(height: Tokens.spaceSnug),
           if (e != null)
             FieldCard(
               child: Column(
@@ -811,22 +811,22 @@ class _PermissionGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(VP.s16),
+      padding: const EdgeInsets.all(Tokens.spaceBase),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           AccentPanel(
-            accent: VP.signal,
+            accent: Tokens.statusAlert,
             child: Text(
               error.permanentlyDenied
                   ? '${error.permissionName} access is turned off. Enable it in '
                       'system settings to capture frames.'
                   : '${error.permissionName} access is needed to stamp and sign '
                       'frames.',
-              style: VP.body,
+              style: Tokens.body,
             ),
           ),
-          const SizedBox(height: VP.s24),
+          const SizedBox(height: Tokens.spaceSection),
           if (error.permanentlyDenied)
             const FilledButton(
               onPressed: openAppSettings,
@@ -852,15 +852,15 @@ class _FatalError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(VP.s16),
+      padding: const EdgeInsets.all(Tokens.spaceBase),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           AccentPanel(
-            accent: VP.signal,
-            child: Text('The camera did not start. $message', style: VP.body),
+            accent: Tokens.statusAlert,
+            child: Text('The camera did not start. $message', style: Tokens.body),
           ),
-          const SizedBox(height: VP.s24),
+          const SizedBox(height: Tokens.spaceSection),
           FilledButton(onPressed: onRetry, child: const Text('Try again')),
         ],
       ),
