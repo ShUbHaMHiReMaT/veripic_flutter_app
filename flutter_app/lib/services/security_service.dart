@@ -214,6 +214,9 @@ class SecurityService {
   //     Info = "HMAC-Image-Signing",
   //   )
   // ---------------------------------------------------------------------
+  /// Retains its original spelling deliberately. This string is HKDF input:
+  /// changing it derives a different key, which would invalidate every photo
+  /// already signed. The app's display name has no bearing on it.
   static const String hkdfSalt = 'VeriPic-Device-Salt-2026';
   static const String hkdfInfo = 'HMAC-Image-Signing';
   static const int hkdfKeyLength = 32;

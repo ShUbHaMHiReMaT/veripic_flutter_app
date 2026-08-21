@@ -33,7 +33,7 @@ android {
         // Namespaced under the GitHub account that publishes the releases, which
         // is the conventional identifier when you do not own a domain. This is
         // permanent once published — changing it later creates a separate app.
-        applicationId = "io.github.shubhamhiremat.veripic"
+        applicationId = "io.github.shubhamhiremat.geoguard"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

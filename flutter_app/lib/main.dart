@@ -17,11 +17,11 @@ Future<void> main() async {
   final ThemeController themeController = ThemeController();
   await themeController.load();
 
-  runApp(VeriPicApp(themeController: themeController));
+  runApp(GeoGuardApp(themeController: themeController));
 }
 
-class VeriPicApp extends StatelessWidget {
-  const VeriPicApp({super.key, required this.themeController});
+class GeoGuardApp extends StatelessWidget {
+  const GeoGuardApp({super.key, required this.themeController});
 
   final ThemeController themeController;
 
@@ -30,7 +30,7 @@ class VeriPicApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeController,
       builder: (BuildContext context, ThemeMode mode, _) => MaterialApp(
-        title: 'VeriPic',
+        title: 'GeoGuard',
         debugShowCheckedModeBanner: false,
         theme: Tokens.light(),
         darkTheme: Tokens.dark(),

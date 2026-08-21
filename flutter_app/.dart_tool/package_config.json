@@ -824,7 +824,7 @@
       "languageVersion": "3.4"
     },
     {
-      "name": "veripic",
+      "name": "geoguard",
       "rootUri": "../",
       "packageUri": "lib/",
       "languageVersion": "3.3"

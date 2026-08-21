@@ -135,7 +135,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       await Printing.sharePdf(
         bytes: pdf,
         filename:
-            'veripic_certificate_\${DateTime.now().millisecondsSinceEpoch}.pdf',
+            'geoguard_certificate_\${DateTime.now().millisecondsSinceEpoch}.pdf',
       );
     } catch (e) {
       if (!mounted) return;
@@ -203,7 +203,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
           ? EmptyState(
               icon: Icons.fact_check_outlined,
               title: 'No frame selected',
-              message: 'Pick a frame and VeriPic will recover its payload, '
+              message: 'Pick a frame and GeoGuard will recover its payload, '
                   'validate the signature, measure stamp drift, and screen it '
                   'for AI generation.',
               actionLabel: 'Select a frame',
@@ -445,7 +445,7 @@ class _Verdict extends StatelessWidget {
       case VerificationVerdict.notSigned:
         tint = Tokens.statusWarn;
         icon = Icons.help_outline;
-        headline = 'Not signed by VeriPic';
+        headline = 'Not signed by GeoGuard';
       case VerificationVerdict.error:
         tint = Tokens.statusWarn;
         icon = Icons.error_outline;

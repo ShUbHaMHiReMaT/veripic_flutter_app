@@ -103,15 +103,15 @@ class VerificationService {
       final SignedEnvelope? envelope = _security.extractEnvelope(imageBytes);
 
       if (envelope == null) {
-        report(VerifyStage.extract, StageState.failed, 'No VeriPic payload found');
+        report(VerifyStage.extract, StageState.failed, 'No GeoGuard payload found');
         report(VerifyStage.hmac, StageState.skipped, 'Nothing to validate');
         report(VerifyStage.dhash, StageState.skipped, 'No reference hash');
         report(VerifyStage.scene, StageState.skipped, 'No reference tiles');
         return VerificationReport(
           verdict: VerificationVerdict.notSigned,
           reason:
-              'No VeriPic signature found in EXIF/COM/EOF metadata. The image was '
-              'never signed by VeriPic, or its metadata has been stripped.',
+              'No GeoGuard signature found in EXIF/COM/EOF metadata. The image was '
+              'never signed by GeoGuard, or its metadata has been stripped.',
         );
       }
 

@@ -14,15 +14,18 @@ class StoredFrame {
 
 /// Read-only index of the frames this app has written.
 ///
-/// Deliberately scoped to VeriPic's own output — it enumerates the files the
+/// Deliberately scoped to GeoGuard's own output — it enumerates the files the
 /// capture pipeline already writes and never reads the device camera roll, so
 /// only frames this app stamped and signed can appear in the gallery.
 ///
 /// This does not change the capture pipeline; it only reads what that pipeline
 /// has already produced.
 class FrameStore {
-  /// Filename shape written by the capture pipeline: `veripic_<millis>.png`.
-  static final RegExp _namePattern = RegExp(r'^veripic_(\d+)\.png$');
+  /// Filename shape written by the capture pipeline: `geoguard_<millis>.png`.
+  /// The former `veripic_` prefix is still matched so frames captured before
+  /// the rename remain visible in the gallery.
+  static final RegExp _namePattern =
+      RegExp(r'^(?:geoguard|veripic)_(\d+)\.png$');
 
   /// Every stored frame, newest first.
   Future<List<StoredFrame>> list() async {

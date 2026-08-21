@@ -1,10 +1,10 @@
 {
   "roots": [
-    "veripic"
+    "geoguard"
   ],
   "packages": [
     {
-      "name": "veripic",
+      "name": "geoguard",
       "version": "1.0.0+1",
       "dependencies": [
         "android_id",

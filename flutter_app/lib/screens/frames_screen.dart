@@ -8,7 +8,7 @@ import 'frame_detail_screen.dart';
 
 /// Scrollable grid of frames this app captured, newest first.
 ///
-/// Only frames VeriPic stamped and signed appear here — this is never the
+/// Only frames GeoGuard stamped and signed appear here — this is never the
 /// device's camera roll.
 class FramesScreen extends StatefulWidget {
   const FramesScreen({super.key});

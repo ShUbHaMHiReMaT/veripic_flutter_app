@@ -25,7 +25,7 @@ class PermissionRequiredException implements Exception {
 
 /// Thrown when the OS reports the fix came from a mock location provider.
 ///
-/// Signing a spoofed coordinate would let VeriPic vouch for a lie, so capture
+/// Signing a spoofed coordinate would let GeoGuard vouch for a lie, so capture
 /// is refused outright rather than recording the fix with a caveat.
 class MockLocationException implements Exception {
   const MockLocationException();
@@ -120,10 +120,10 @@ class CameraService {
     // 3. Save to Temp File & Export to Gallery
     final Directory tempDir = await getTemporaryDirectory();
     final String tempPath =
-        '${tempDir.path}/veripic_${timestamp.millisecondsSinceEpoch}.png';
+        '${tempDir.path}/geoguard_${timestamp.millisecondsSinceEpoch}.png';
     final File finalFile = await File(tempPath).writeAsBytes(finalBytes);
 
-    await Gal.putImage(finalFile.path, album: 'VeriPic');
+    await Gal.putImage(finalFile.path, album: 'GeoGuard');
 
     return CaptureResult(
       bytes: finalBytes,

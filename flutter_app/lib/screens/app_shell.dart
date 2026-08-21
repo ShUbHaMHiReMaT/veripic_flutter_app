@@ -21,7 +21,7 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
 
   static const List<String> _titles = <String>[
-    'VeriPic',
+    'GeoGuard',
     'Frames',
     'Locations'
   ];

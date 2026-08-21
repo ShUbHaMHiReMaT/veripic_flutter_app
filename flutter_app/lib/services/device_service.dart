@@ -6,7 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Immutable snapshot of everything VeriPic knows about the host device.
+/// Immutable snapshot of everything GeoGuard knows about the host device.
 ///
 /// Split deliberately into three tiers:
 ///  * [seed]       — the *secret* hardware key material. Never leaves the
@@ -84,6 +84,9 @@ class DeviceService {
 
   /// Domain-separation prefix so the published device hash can never be used
   /// as the HKDF input keying material.
+  /// Retains its original spelling deliberately — it is hashed into the
+  /// published device id, so renaming it would change every device hash and
+  /// break signatures already issued.
   static const String _publicIdDomain = 'VeriPic-PublicDeviceID-v1';
 
   static DeviceFingerprint? _cached;

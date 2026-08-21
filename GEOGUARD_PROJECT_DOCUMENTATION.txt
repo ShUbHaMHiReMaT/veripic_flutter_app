@@ -1,12 +1,12 @@
 ===============================================================================
-VERIPIC - COMPLETE PROJECT DOCUMENTATION
+GEOGUARD - COMPLETE PROJECT DOCUMENTATION
 Tamper-evident, geo-tagged photo capture and verification
 ===============================================================================
 
 Document generated: 21 August 2026
 Repository:         D:\veripic_flutter_app
 Application root:   D:\veripic_flutter_app\flutter_app
-Package name:       com.example.veripic
+Package name:       io.github.shubhamhiremat.geoguard
 Version:            1.0.0+1
 Author / owner:     ShUbHaMHiReMaT (shreyashalingali@gmail.com)
 
@@ -952,7 +952,8 @@ the system expresses no preference, because the app is used outdoors.
     explicitly in the main manifest. Without it a release build silently has no
     network and the map renders as blank tiles.
 
-    Package / namespace:  com.example.veripic
+    Package / applicationId:  io.github.shubhamhiremat.geoguard
+    Namespace (compile-time): com.example.veripic — internal only, not published
     SDK versions inherit the Flutter defaults (compileSdk, minSdk, targetSdk all
     delegate to the Flutter Gradle plugin).
 
@@ -1354,6 +1355,48 @@ the entire palette could be swapped without renaming call sites. The one
 exception was borderHairline, which had to become outline when the border went
 from 1px to 2px, because the old name had become a lie.
 
+
+===============================================================================
+24a. THE GEOGUARD RENAME
+===============================================================================
+
+The app was renamed from VeriPic to GeoGuard on 22 August 2026. The rename was
+applied to everything a user or a court can see, and deliberately NOT applied to
+four categories of string, because each is load-bearing:
+
+  HKDF salt              'VeriPic-Device-Salt-2026'
+      This string is HKDF input keying material. Changing it derives a
+      different signing key, which would invalidate every photograph already
+      signed on every device.
+
+  Device id domain       'VeriPic-PublicDeviceID-v1'
+      Hashed into the published device identifier that goes into every
+      envelope. Changing it changes every device hash, and therefore every
+      signature.
+
+  Payload markers        'VPIC_METADATA:' / 'VPIC_PAYLOAD:'
+      The byte sequences used to locate the payload inside an image file.
+      Changing them makes existing signed photographs unreadable.
+
+  Secure storage keys    'veripic_key_ring_v4', 'veripic_hw_signing_key_v3',
+                         'veripic_fallback_hw_id'
+      Changing them orphans the stored key ring on every existing install.
+
+A product name is a label; these are part of the wire format and the key
+derivation. They are commented in the source to stop a future contributor
+"tidying" them.
+
+Two further points about the rename:
+
+  * The capture filename prefix DID change, from `veripic_<millis>.png` to
+    `geoguard_<millis>.png`. FrameStore matches both, so frames captured before
+    the rename still appear in the gallery.
+
+  * The signing certificate's subject still reads CN=VeriPic. It is cosmetic and
+    invisible in normal use, but it can only be changed by generating a new
+    keystore - which changes the signing key, and therefore ANDROID_ID, and
+    therefore every derived HMAC key. It must be decided before the first public
+    release or never.
 
 ===============================================================================
 25. GLOSSARY

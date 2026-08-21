@@ -84,7 +84,7 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
               final SignedEnvelope? e = snap.data;
               if (e == null) {
                 return const ErrorState(
-                  message: 'No VeriPic payload found in this frame. Its '
+                  message: 'No GeoGuard payload found in this frame. Its '
                       'metadata may have been stripped.',
                 );
               }

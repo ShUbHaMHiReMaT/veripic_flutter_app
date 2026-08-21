@@ -1,5 +1,5 @@
-name: veripic
-description: VeriPic - Tamper-Proof Geotagged Camera & Verification System.
+name: geoguard
+description: GeoGuard - Tamper-Proof Geotagged Camera & Verification System.
 publish_to: "none"
 version: 1.0.0+1
 

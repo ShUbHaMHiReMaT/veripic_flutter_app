@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
-import 'package:veripic/services/security_service.dart';
+import 'package:geoguard/services/security_service.dart';
 
 /// In-memory stand-in for the Keystore/Keychain so the signing pipeline can be
 /// exercised on the test host.

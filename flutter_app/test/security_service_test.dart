@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:veripic/services/security_service.dart';
+import 'package:geoguard/services/security_service.dart';
 
 /// Hex helper for the RFC test vectors.
 Uint8List _hex(String s) {
@@ -52,7 +52,7 @@ void main() {
       );
     });
 
-    test('is deterministic for the VeriPic parameters', () {
+    test('is deterministic for the documented parameters', () {
       const String seed = 'veripic|android|abc123|brand=Google|model=Pixel 7';
       Uint8List derive() => SecurityService.hkdfSha256(
             ikm: utf8.encode(seed),
