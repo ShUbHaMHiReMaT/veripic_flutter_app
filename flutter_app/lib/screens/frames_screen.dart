@@ -11,7 +11,15 @@ import 'frame_detail_screen.dart';
 /// Only frames GeoGuard stamped and signed appear here — this is never the
 /// device's camera roll.
 class FramesScreen extends StatefulWidget {
-  const FramesScreen({super.key});
+  const FramesScreen({super.key, this.standalone = false});
+
+  /// True when this screen was pushed as its own route rather than shown as a
+  /// tab inside the shell.
+  ///
+  /// The tab version draws into the shell's Scaffold. Pushed as a route with
+  /// no Scaffold of its own it had no app bar, no background and no way back —
+  /// which is what the camera's thumbnail button opened.
+  final bool standalone;
 
   @override
   State<FramesScreen> createState() => _FramesScreenState();
@@ -22,13 +30,39 @@ class _FramesScreenState extends State<FramesScreen> {
 
   late Future<List<StoredFrame>> _future = _store.list();
 
+  @override
+  void initState() {
+    super.initState();
+    // This screen lives inside the shell's IndexedStack, so it is built once
+    // and never rebuilt when the tab is re-selected. Without this listener a
+    // new capture only showed up after the app was killed and reopened.
+    FrameStore.revision.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    FrameStore.revision.removeListener(_refresh);
+    super.dispose();
+  }
+
   Future<void> _refresh() async {
+    if (!mounted) return;
     setState(() => _future = _store.list());
     await _future;
   }
 
   @override
   Widget build(BuildContext context) {
+    final Widget body = _buildBody(context);
+    if (!widget.standalone) return body;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Photos')),
+      body: body,
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     final Palette p = Palette.of(context);
 
     return FutureBuilder<List<StoredFrame>>(
@@ -37,13 +71,13 @@ class _FramesScreenState extends State<FramesScreen> {
         if (snap.connectionState != ConnectionState.done) {
           return const Padding(
             padding: EdgeInsets.all(Tokens.spaceBase),
-            child: LoadingState(message: 'Reading stored frames'),
+            child: LoadingState(message: 'Loading your photos'),
           );
         }
 
         if (snap.hasError) {
           return ErrorState(
-            message: 'Stored frames could not be read. Pull down to try '
+            message: 'Your photos could not be loaded. Pull down to try '
                 'again.',
             actionLabel: 'Try again',
             onAction: _refresh,
@@ -54,9 +88,9 @@ class _FramesScreenState extends State<FramesScreen> {
         if (frames.isEmpty) {
           return const EmptyState(
             icon: Icons.photo_outlined,
-            title: 'No frames yet',
-            message: 'Frames you capture are stamped, signed, and collected '
-                'here. Open the viewfinder to take the first one.',
+            title: 'No photos yet',
+            message: 'Photos you take are stamped, signed and kept here. Open '
+                'the camera to take your first one.',
           );
         }
 
@@ -101,7 +135,7 @@ class _FrameCell extends StatelessWidget {
 
     return PressCard(
       padding: const EdgeInsets.all(Tokens.spaceTight),
-      semanticLabel: 'Frame captured $stamp',
+      semanticLabel: 'Photo taken $stamp',
       onTap: () {
         HapticFeedback.selectionClick();
         Navigator.of(context).push(

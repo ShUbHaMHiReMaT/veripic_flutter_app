@@ -282,10 +282,22 @@ class CertificateService {
       <String>['Verdict', _verdictText(r.verdict)],
       <String>[
         'Signature check',
+        c == null ? 'not performed' : (c.valid ? 'VALID' : 'INVALID'),
+      ],
+      <String>[
+        'Signature scheme',
         c == null
             ? 'not performed'
-            : (c.valid ? 'VALID — ${c.matchedKey?.origin.label}' : 'INVALID')
+            // v6 signs with ECDSA P-256, so the public key travels in the file
+            // and the check is reproducible by any party. Earlier envelopes
+            // carried a device-bound HMAC, verifiable only on the capturing
+            // device, which the certificate must not overstate.
+            : (c.isPortable
+                ? 'ECDSA P-256 (SHA-256), publicly verifiable'
+                : c.matchedKey?.origin.label ?? 'HMAC-SHA256, device-bound'),
       ],
+      if (c != null && c.signerPublicKey != null)
+        <String>['Signer public key', c.signerPublicKey!],
       <String>[
         'Stamp fingerprint drift',
         '${r.hammingDistance} of 64 bits '

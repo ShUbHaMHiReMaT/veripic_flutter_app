@@ -23,17 +23,17 @@ enum VerifyStage {
 
 extension VerifyStageInfo on VerifyStage {
   String get title => switch (this) {
-        VerifyStage.extract => 'Extracting EXIF / COM payload',
-        VerifyStage.hmac => 'Validating hardware HMAC',
-        VerifyStage.dhash => 'Scanning banner dHash gradients',
-        VerifyStage.scene => 'Comparing scene tiles',
+        VerifyStage.extract => 'Looking for the hidden details',
+        VerifyStage.hmac => 'Checking the signature',
+        VerifyStage.dhash => 'Checking the stamp',
+        VerifyStage.scene => 'Checking the picture',
       };
 
   String get code => switch (this) {
-        VerifyStage.extract => 'PAYLOAD',
+        VerifyStage.extract => 'DETAILS',
         VerifyStage.hmac => 'HMAC',
-        VerifyStage.dhash => 'DHASH',
-        VerifyStage.scene => 'SCENE',
+        VerifyStage.dhash => 'STAMP',
+        VerifyStage.scene => 'PICTURE',
       };
 }
 
@@ -103,22 +103,23 @@ class VerificationService {
       final SignedEnvelope? envelope = _security.extractEnvelope(imageBytes);
 
       if (envelope == null) {
-        report(VerifyStage.extract, StageState.failed, 'No GeoGuard payload found');
-        report(VerifyStage.hmac, StageState.skipped, 'Nothing to validate');
-        report(VerifyStage.dhash, StageState.skipped, 'No reference hash');
-        report(VerifyStage.scene, StageState.skipped, 'No reference tiles');
+        report(VerifyStage.extract, StageState.failed,
+            'No GeoGuard details found');
+        report(VerifyStage.hmac, StageState.skipped, 'Nothing to check');
+        report(VerifyStage.dhash, StageState.skipped, 'No stamp to compare');
+        report(VerifyStage.scene, StageState.skipped, 'No picture to compare');
         return VerificationReport(
           verdict: VerificationVerdict.notSigned,
           reason:
-              'No GeoGuard signature found in EXIF/COM/EOF metadata. The image was '
-              'never signed by GeoGuard, or its metadata has been stripped.',
+              'This photo has no GeoGuard details inside it. It was either not '
+              'taken with GeoGuard, or the details were removed later.',
         );
       }
 
       report(
         VerifyStage.extract,
         StageState.passed,
-        'Envelope v${envelope.version} recovered'
+        'Details found (v${envelope.version})'
         '${envelope.kid != null ? ' · key ${envelope.kid}' : ''}',
       );
 
@@ -129,31 +130,40 @@ class VerificationService {
 
       if (!check.valid) {
         report(VerifyStage.hmac, StageState.failed,
-            check.note ?? 'Signature mismatch');
-        report(VerifyStage.dhash, StageState.skipped, 'Chain of trust broken');
-        report(VerifyStage.scene, StageState.skipped, 'Chain of trust broken');
+            check.note ?? 'The signature does not match');
+        report(VerifyStage.dhash, StageState.skipped,
+            'Skipped — the signature failed');
+        report(VerifyStage.scene, StageState.skipped,
+            'Skipped — the signature failed');
         return VerificationReport(
           verdict: VerificationVerdict.tamperedMetadata,
-          reason:
-              'HMAC signature mismatch: the metadata payload was altered, or the '
-              'photo was signed on a different device. ${check.note ?? ''}'.trim(),
+          reason: check.note ??
+              'The signature does not match, so something in this photo has '
+                  'been changed since it was taken.',
           envelope: envelope,
           signatureCheck: check,
         );
       }
 
-      report(VerifyStage.hmac, StageState.passed,
-          check.matchedKey?.origin.label ?? 'Signature valid');
+      report(
+        VerifyStage.hmac,
+        StageState.passed,
+        check.isPortable
+            ? 'The signature matches — any phone can check this photo'
+            : check.matchedKey?.origin.plainLabel ?? 'The signature matches',
+      );
 
       // ---- Stage 3: perceptual banner hash ---------------------------
       report(VerifyStage.dhash, StageState.running);
       final img.Image? decoded = img.decodeImage(imageBytes);
       if (decoded == null) {
-        report(VerifyStage.dhash, StageState.failed, 'Undecodable image data');
-        report(VerifyStage.scene, StageState.skipped, 'No decodable frame');
+        report(VerifyStage.dhash, StageState.failed,
+            'This file could not be read');
+        report(VerifyStage.scene, StageState.skipped,
+            'The photo could not be read');
         return VerificationReport(
           verdict: VerificationVerdict.error,
-          reason: 'Failed to decode image bytes.',
+          reason: 'This photo could not be read.',
           envelope: envelope,
           signatureCheck: check,
         );
@@ -165,14 +175,16 @@ class VerificationService {
 
       if (distance > SecurityService.maxPerceptualHammingDistance) {
         report(VerifyStage.dhash, StageState.failed,
-            'Hamming distance $distance exceeds threshold '
+            'The stamp differs in $distance of 64 spots, the limit is '
             '${SecurityService.maxPerceptualHammingDistance}');
-        report(VerifyStage.scene, StageState.skipped, 'Banner already failed');
+        report(VerifyStage.scene, StageState.skipped,
+            'Skipped — the stamp check already failed');
         return VerificationReport(
           verdict: VerificationVerdict.tamperedPixels,
           reason:
-              'Tamper detected (Hamming distance $distance): the stamp banner — '
-              'GPS text, address or timestamp — has been edited since capture.',
+              'The stamp — the GPS text, place and time written on the photo — '
+              'has been edited since the photo was taken. It differs in '
+              '$distance of 64 spots.',
           envelope: envelope,
           signatureCheck: check,
           recomputedHash: currentDHash,
@@ -181,8 +193,8 @@ class VerificationService {
       }
 
       report(VerifyStage.dhash, StageState.passed,
-          'Hamming distance $distance / '
-          '${SecurityService.maxPerceptualHammingDistance} tolerated');
+          'The stamp matches — $distance of 64 spots differ, limit '
+          '${SecurityService.maxPerceptualHammingDistance}');
 
       // ---- Stage 4: photographic scene -------------------------------
       report(VerifyStage.scene, StageState.running);
@@ -194,7 +206,7 @@ class VerificationService {
         // v4 and earlier protected only the banner, so there is nothing to
         // compare against. Say so rather than implying the scene passed.
         report(VerifyStage.scene, StageState.skipped,
-            'Envelope v${envelope.version} predates scene protection');
+            'Older photo (v${envelope.version}) — the picture was not protected');
       } else {
         final List<String> currentTiles = _security.computeSceneTiles(decoded);
         tileDistances =
@@ -202,7 +214,7 @@ class VerificationService {
 
         if (tileDistances.isEmpty) {
           report(VerifyStage.scene, StageState.skipped,
-              'Scene could not be tiled for comparison');
+              'The picture could not be compared');
         } else {
           altered = tileDistances
               .where((int d) => d > SecurityService.maxSceneTileHammingDistance)
@@ -210,14 +222,14 @@ class VerificationService {
 
           if (altered > 0) {
             report(VerifyStage.scene, StageState.failed,
-                '$altered of ${tileDistances.length} scene tiles altered');
+                '$altered of ${tileDistances.length} parts of the picture were '
+                'changed');
             return VerificationReport(
               verdict: VerificationVerdict.tamperedScene,
               reason:
-                  'Tamper detected in the photographic content: $altered of '
-                  '${tileDistances.length} scene tiles no longer match the '
-                  'signed original. The picture itself has been edited, not '
-                  'just the stamp.',
+                  '$altered of ${tileDistances.length} parts of the picture no '
+                  'longer match the original. The picture itself has been '
+                  'edited, not just the stamp.',
               envelope: envelope,
               signatureCheck: check,
               recomputedHash: currentDHash,
@@ -228,19 +240,18 @@ class VerificationService {
           }
 
           report(VerifyStage.scene, StageState.passed,
-              'All ${tileDistances.length} scene tiles match');
+              'All ${tileDistances.length} parts of the picture match');
         }
       }
 
       return VerificationReport(
         verdict: VerificationVerdict.authentic,
         reason: envelope.protectsScene
-            ? 'Image authentic: hardware-bound signature valid, and both the '
-                'stamp banner and the photographic scene match the original '
-                'capture.'
-            : 'Image authentic: hardware-bound signature valid and the stamp '
-                'banner matches. Note this frame predates scene protection, so '
-                'the photographic content itself was not covered.',
+            ? 'This photo is real. The signature matches the phone that took '
+                'it, and both the stamp and the picture are unchanged.'
+            : 'This photo is real. The signature matches the phone that took '
+                'it and the stamp is unchanged. This photo is older, so the '
+                'picture itself was not protected.',
         envelope: envelope,
         signatureCheck: check,
         recomputedHash: currentDHash,
@@ -251,7 +262,7 @@ class VerificationService {
     } catch (e) {
       return VerificationReport(
         verdict: VerificationVerdict.error,
-        reason: 'Verification process encountered an error: $e',
+        reason: 'The check could not be finished: $e',
       );
     }
   }

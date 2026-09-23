@@ -9,9 +9,11 @@ import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 
 import '../services/certificate_service.dart';
+import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
 import '../theme/veripic_theme.dart';
+import 'senders_screen.dart';
 
 class VerifyScreen extends StatefulWidget {
   const VerifyScreen({super.key});
@@ -105,7 +107,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       HapticFeedback.vibrate();
       setState(() {
         _busy = false;
-        _failure = 'That frame could not be opened. Pick a different file.';
+        _failure = 'That photo could not be opened. Pick a different one.';
       });
     }
   }
@@ -135,16 +137,36 @@ class _VerifyScreenState extends State<VerifyScreen> {
       await Printing.sharePdf(
         bytes: pdf,
         filename:
-            'geoguard_certificate_\${DateTime.now().millisecondsSinceEpoch}.pdf',
+            'geoguard_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
       );
     } catch (e) {
       if (!mounted) return;
       HapticFeedback.vibrate();
       setState(() => _failure =
-          'The certificate could not be generated. \$e');
+          'The report could not be made. $e');
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
+  }
+
+  /// Puts a name to the key that signed this photo.
+  ///
+  /// Trust on first use: the photo already proves it is unedited, and naming
+  /// the sender is the separate, deliberate step that turns "some GeoGuard
+  /// phone" into "Ravi" for every photo they send afterwards.
+  Future<void> _saveSender() async {
+    final String? publicKey = _report?.signatureCheck?.signerPublicKey;
+    final Uint8List? bytes = _preview;
+    if (publicKey == null || bytes == null) return;
+
+    final TrustedContact? saved =
+        await promptSaveSender(context, publicKeyB64: publicKey);
+    if (saved == null || !mounted) return;
+
+    // Re-run the check so the verdict now names them. No progress callback:
+    // the checklist has already played out.
+    final VerificationReport report = await _service.verify(bytes);
+    if (mounted) setState(() => _report = report);
   }
 
   Future<void> _chooseSource() async {
@@ -167,10 +189,10 @@ class _VerifyScreenState extends State<VerifyScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const SectionHead(title: 'Select a frame'),
+              const SectionHead(title: 'Pick a photo'),
               const SizedBox(height: Tokens.spaceBase),
               ActionButton(
-                label: 'Choose from gallery',
+                label: 'Pick from gallery',
                 icon: Icons.folder_outlined,
                 onPressed: () => Navigator.of(context).pop(ImageSource.gallery),
               ),
@@ -198,15 +220,15 @@ class _VerifyScreenState extends State<VerifyScreen> {
     final bool idle = preview == null && !_busy && _failure == null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Check')),
+      appBar: AppBar(title: const Text('Check a photo')),
       body: idle
           ? EmptyState(
               icon: Icons.fact_check_outlined,
-              title: 'No frame selected',
-              message: 'Pick a frame and GeoGuard will recover its payload, '
-                  'validate the signature, measure stamp drift, and screen it '
-                  'for AI generation.',
-              actionLabel: 'Select a frame',
+              title: 'No photo picked yet',
+              message: 'Pick a photo and GeoGuard will read the details hidden '
+                  'inside it, check the signature, check the stamp, and check '
+                  'the picture for edits.',
+              actionLabel: 'Pick a photo',
               onAction: _chooseSource,
             )
           : ListView(
@@ -220,7 +242,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 if (_failure != null) ...<Widget>[
                   ErrorState(
                     message: _failure!,
-                    actionLabel: 'Select a frame',
+                    actionLabel: 'Pick a photo',
                     onAction: _chooseSource,
                   ),
                   const SizedBox(height: Tokens.spaceSection),
@@ -243,6 +265,13 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 ],
                 if (report != null) ...<Widget>[
                   _Verdict(report: report),
+                  if (report.signatureCheck?.isPortable ?? false) ...<Widget>[
+                    const SizedBox(height: Tokens.spaceSnug),
+                    _SignerCard(
+                      check: report.signatureCheck!,
+                      onSave: _saveSender,
+                    ),
+                  ],
                   const SizedBox(height: Tokens.spaceSection),
                 ],
                 if (preview != null) ...<Widget>[
@@ -252,7 +281,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 ],
                 if (report != null) ...<Widget>[
                   const SizedBox(height: Tokens.spaceSection),
-                  const SectionHead(title: 'Findings'),
+                  const SectionHead(title: 'What we found'),
                   const SizedBox(height: Tokens.spaceSnug),
                   _DriftCard(report: report),
                   const SizedBox(height: Tokens.spaceSnug),
@@ -266,8 +295,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
                   const SizedBox(height: Tokens.spaceSection),
                   ActionButton(
                     label: _exporting
-                        ? 'Preparing certificate'
-                        : 'Export evidence certificate',
+                        ? 'Making the report'
+                        : 'Share a PDF report',
                     icon: Icons.picture_as_pdf_outlined,
                     color: Tokens.tintInfo,
                     onPressed: _exporting ? null : _exportCertificate,
@@ -275,7 +304,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 ],
                 const SizedBox(height: Tokens.spaceSnug),
                 ActionButton(
-                  label: _busy ? 'Checking' : 'Check another frame',
+                  label: _busy ? 'Checking' : 'Check another photo',
                   icon: Icons.refresh,
                   onPressed: _busy ? null : _chooseSource,
                 ),
@@ -429,7 +458,7 @@ class _Verdict extends StatelessWidget {
       case VerificationVerdict.authentic:
         tint = Tokens.statusOk;
         icon = Icons.verified_outlined;
-        headline = 'Authentic';
+        headline = 'Real photo';
       case VerificationVerdict.tamperedScene:
         tint = Tokens.statusAlert;
         icon = Icons.image_not_supported_outlined;
@@ -441,15 +470,15 @@ class _Verdict extends StatelessWidget {
       case VerificationVerdict.tamperedMetadata:
         tint = Tokens.statusAlert;
         icon = Icons.gpp_bad_outlined;
-        headline = 'Signature mismatch';
+        headline = 'Details changed';
       case VerificationVerdict.notSigned:
         tint = Tokens.statusWarn;
         icon = Icons.help_outline;
-        headline = 'Not signed by GeoGuard';
+        headline = 'Not taken with GeoGuard';
       case VerificationVerdict.error:
         tint = Tokens.statusWarn;
         icon = Icons.error_outline;
-        headline = 'Check incomplete';
+        headline = 'Check not finished';
     }
 
     return FieldCard(
@@ -462,13 +491,88 @@ class _Verdict extends StatelessWidget {
               const SizedBox(width: Tokens.spaceSnug),
               Expanded(child: Text(headline, style: p.screenTitle)),
               StatusBadge(
-                label: report.isAuthentic ? 'authentic' : 'not authentic',
+                label: report.isAuthentic ? 'real' : 'not real',
                 color: tint,
               ),
             ],
           ),
           const SizedBox(height: Tokens.spaceBase),
           Text(report.reason, style: p.body),
+        ],
+      ),
+    );
+  }
+}
+
+// =======================================================================
+// Who signed it
+// =======================================================================
+
+/// Answers "who took this", which is a different question from "has it been
+/// edited" and is kept in its own card so the two are never confused.
+///
+/// A valid signature is pure maths and means the same on every phone. Knowing
+/// *whose* key it is depends entirely on whether this user has saved that key,
+/// so an unsaved sender is reported as unknown rather than quietly trusted.
+class _SignerCard extends StatelessWidget {
+  const _SignerCard({required this.check, required this.onSave});
+
+  final SignatureCheck check;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    final (Color tint, IconData icon) = switch (check.trust) {
+      SignerTrust.thisPhone => (Tokens.statusOk, Icons.smartphone_outlined),
+      SignerTrust.savedContact => (Tokens.statusOk, Icons.person_outline),
+      SignerTrust.unknownPhone => (Tokens.statusWarn, Icons.person_off_outlined),
+      SignerTrust.localOnly => (Tokens.tintNull, Icons.smartphone_outlined),
+    };
+
+    return FieldCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              IconTile(icon: icon, color: tint),
+              const SizedBox(width: Tokens.spaceSnug),
+              Expanded(child: Text('Who took it', style: p.cardTitle)),
+              StatusBadge(
+                label: check.trust == SignerTrust.unknownPhone
+                    ? 'not saved'
+                    : 'known',
+                color: tint,
+              ),
+            ],
+          ),
+          const SizedBox(height: Tokens.spaceBase),
+          Text(check.signerLabel, style: p.screenTitle),
+          if (check.note != null) ...<Widget>[
+            const SizedBox(height: Tokens.spaceTight),
+            Text(check.note!, style: p.body),
+          ],
+          const SizedBox(height: Tokens.spaceSnug),
+          DataLine(
+            label: 'Their code',
+            value: TrustedContact(
+              fingerprint:
+                  IdentityService.fingerprintOf(check.signerPublicKey!),
+              name: '',
+              publicKey: check.signerPublicKey!,
+              savedAtMs: 0,
+            ).readableFingerprint,
+          ),
+          if (check.trust == SignerTrust.unknownPhone) ...<Widget>[
+            const SizedBox(height: Tokens.spaceSnug),
+            ActionButton(
+              label: 'Save this sender',
+              icon: Icons.person_add_alt,
+              onPressed: onSave,
+            ),
+          ],
         ],
       ),
     );
@@ -500,9 +604,9 @@ class _DriftCard extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Expanded(child: Text('Stamp drift', style: p.cardTitle)),
+              Expanded(child: Text('Stamp check', style: p.cardTitle)),
               StatusBadge(
-                label: within ? 'in tolerance' : 'over tolerance',
+                label: within ? 'unchanged' : 'changed',
                 color: tint,
               ),
             ],
@@ -528,18 +632,18 @@ class _DriftCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: Tokens.spaceTight),
-          Text('HAMMING $d / 64 — TOLERANCE $threshold', style: p.dataSmall),
+          Text('$d OF 64 SPOTS DIFFER — LIMIT $threshold', style: p.dataSmall),
           if (check != null) ...<Widget>[
             const SizedBox(height: Tokens.spaceSnug),
             DataLine(
               label: 'Signature',
-              value: check.valid ? 'VALID' : 'INVALID',
+              value: check.valid ? 'MATCHES' : 'DOES NOT MATCH',
               copyable: false,
             ),
             if (check.matchedKey != null)
               DataLine(
-                label: 'Verified by',
-                value: check.matchedKey!.origin.label,
+                label: 'Checked with',
+                value: check.matchedKey!.origin.plainLabel,
                 copyable: false,
               ),
             if (check.note != null) ...<Widget>[
@@ -581,11 +685,11 @@ class _SceneCard extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Expanded(child: Text('Scene integrity', style: p.cardTitle)),
+              Expanded(child: Text('Picture check', style: p.cardTitle)),
               StatusBadge(
                 label: !checked
-                    ? 'not covered'
-                    : (clean ? 'intact' : '\$altered altered'),
+                    ? 'not checked'
+                    : (clean ? 'unchanged' : '$altered changed'),
                 color: tint,
               ),
             ],
@@ -593,9 +697,8 @@ class _SceneCard extends StatelessWidget {
           const SizedBox(height: Tokens.spaceSnug),
           if (!checked)
             Text(
-              'This frame was signed before scene protection existed, so only '
-              'its stamp banner was covered. The picture itself cannot be '
-              'checked.',
+              'This photo was taken before picture protection existed, so only '
+              'the stamp was protected. The picture itself cannot be checked.',
               style: p.body,
             )
           else ...<Widget>[
@@ -603,8 +706,8 @@ class _SceneCard extends StatelessWidget {
             _TileGrid(tiles: tiles),
             const SizedBox(height: Tokens.spaceTight),
             Text(
-              'TILES \${tiles.length - altered}/\${tiles.length} MATCH — '
-              'TOLERANCE \${SecurityService.maxSceneTileHammingDistance}',
+              '${tiles.length - altered} OF ${tiles.length} PARTS MATCH — '
+              'LIMIT ${SecurityService.maxSceneTileHammingDistance}',
               style: p.dataSmall,
             ),
           ],
@@ -647,7 +750,7 @@ class _TileGrid extends StatelessWidget {
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  '\${tiles[i]}',
+                  '${tiles[i]}',
                   style: Tokens.dataSmall.copyWith(color: Tokens.onIdentity),
                 ),
               ),
@@ -687,7 +790,7 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Expanded(child: Text('Embedded metadata', style: p.cardTitle)),
+              Expanded(child: Text('All the details', style: p.cardTitle)),
               Icon(
                 _open ? Icons.expand_less : Icons.expand_more,
                 size: Tokens.iconBase,
@@ -706,26 +809,26 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   DataLine(
-                    label: 'Coordinates',
+                    label: 'GPS location',
                     value: '${e.lat.toStringAsFixed(6)}, '
                         '${e.lon.toStringAsFixed(6)}',
                   ),
                   DataLine(
-                    label: 'Altitude',
+                    label: 'Height',
                     value: '${e.alt.toStringAsFixed(1)} m',
                   ),
                   DataLine(
-                    label: 'Captured',
+                    label: 'Taken on',
                     value:
                         '${DateFormat('ddMMMyy HH:mm:ss').format(captured).toUpperCase()} UTC',
                   ),
-                  DataLine(label: 'Device', value: e.deviceId),
-                  DataLine(label: 'Signing key', value: e.kid ?? '—'),
-                  DataLine(label: 'Envelope', value: 'v${e.version}'),
-                  DataLine(label: 'Stored hash', value: e.pixelHash),
+                  DataLine(label: 'Phone', value: e.deviceId),
+                  DataLine(label: 'Security key', value: e.kid ?? '—'),
+                  DataLine(label: 'Format version', value: 'v${e.version}'),
+                  DataLine(label: 'Saved stamp code', value: e.pixelHash),
                   if (widget.report.recomputedHash != null)
                     DataLine(
-                      label: 'Recomputed',
+                      label: 'Stamp code now',
                       value: widget.report.recomputedHash!,
                     ),
                   DataLine(label: 'Signature', value: e.signature),
@@ -735,7 +838,7 @@ class _MetadataDrawerState extends State<_MetadataDrawer> {
           ),
           const SizedBox(height: Tokens.spaceSnug),
           ActionButton(
-            label: _open ? 'Hide metadata' : 'Show metadata',
+            label: _open ? 'Hide details' : 'Show details',
             color: p.surfaceInset,
             expand: false,
             onPressed: () {
@@ -794,21 +897,21 @@ class _ParticularsDialogState extends State<_ParticularsDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            const SectionHead(title: 'Certificate particulars'),
+            const SectionHead(title: 'Report details'),
             const SizedBox(height: Tokens.spaceSnug),
             Text(
-              'These identify the person certifying the record. Leave any field '
-              'blank to print a ruled line instead.',
+              'These say who is confirming this photo. Leave a box empty and '
+              'the report prints a blank line to fill in by hand.',
               style: p.body,
             ),
             const SizedBox(height: Tokens.spaceBase),
             _Field(controller: _name, label: 'Full name'),
-            _Field(controller: _designation, label: 'Designation'),
+            _Field(controller: _designation, label: 'Job title'),
             _Field(controller: _address, label: 'Address'),
-            _Field(controller: _reference, label: 'Case or file reference'),
+            _Field(controller: _reference, label: 'Case or file number'),
             const SizedBox(height: Tokens.spaceBase),
             ActionButton(
-              label: 'Generate certificate',
+              label: 'Make the report',
               icon: Icons.picture_as_pdf_outlined,
               onPressed: () => Navigator.of(context).pop(
                 CertificateParticulars(

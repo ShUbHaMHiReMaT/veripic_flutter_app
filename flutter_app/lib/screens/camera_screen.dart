@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../main.dart' show cameras;
 import '../services/camera_service.dart';
+import '../services/overlay_service.dart';
 import '../theme/veripic_theme.dart';
 import 'frames_screen.dart';
 
@@ -63,6 +64,12 @@ class _CameraScreenState extends State<CameraScreen>
   /// Reverse-geocoded site name for the stamp card. Resolved on first fix and
   /// again only after the operator has actually moved.
   String? _siteName;
+
+  /// The fuller address line burned into the photo. Resolved from the same
+  /// lookup as [_siteName] and held ready, so the shutter never waits on the
+  /// network.
+  String? _stampAddress;
+
   Position? _siteResolvedAt;
   bool _resolvingSite = false;
 
@@ -184,9 +191,25 @@ class _CameraScreenState extends State<CameraScreen>
             m.administrativeArea,
           ].firstWhere((String? s) => s != null && s.isNotEmpty,
               orElse: () => null) ??
-          'Unnamed site';
+          'Unknown place';
+
+      // Same lookup also yields the longer line the stamp prints, so the
+      // capture path never has to make a network call of its own.
+      final List<String> full = <String>[
+        for (final String? part in <String?>[
+          m.street,
+          m.subLocality,
+          m.locality,
+          m.administrativeArea,
+          m.country,
+        ])
+          if (part != null && part.isNotEmpty) part,
+      ];
+
       setState(() {
         _siteName = name;
+        _stampAddress =
+            full.isNotEmpty ? full.join(', ') : OverlayService.fallbackAddress;
         _siteResolvedAt = p;
       });
     } catch (_) {
@@ -286,11 +309,11 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (!_fixIsUsable) {
       _showBlocked(switch (_livePosition) {
-        null => 'No GPS fix yet. Move away from walls and try again.',
+        null => 'No GPS yet. Move away from walls and try again.',
         _ when _fixIsMocked =>
-          'Location is being faked by another app. Turn off the mock location '
-              'app and developer options to capture a signed frame.',
-        _ => 'GPS fix is stale. Wait for it to refresh.',
+          'Another app is faking your location. Turn off that app and '
+              'developer options to take a signed photo.',
+        _ => 'The GPS reading is old. Wait a moment for a new one.',
       });
       return;
     }
@@ -304,7 +327,12 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       // CameraService already stamps, signs, embeds and exports to the
       // gallery — the bytes it returns are final and must not be re-signed.
-      final CaptureResult shot = await _camera.capture();
+      // The live fix and the address are handed over so the shutter does not
+      // wait on a fresh GPS lock or a network lookup.
+      final CaptureResult shot = await _camera.capture(
+        livePosition: _livePosition,
+        addressText: _stampAddress,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -315,19 +343,30 @@ class _CameraScreenState extends State<CameraScreen>
 
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(
-          duration: Duration(seconds: 2),
-          content: Text('Frame stamped, signed, and saved.'),
+        ..showSnackBar(SnackBar(
+          duration: const Duration(seconds: 4),
+          content: Text(
+            shot.galleryError == null
+                ? 'Photo saved. Find it under Photos.'
+                : 'Photo saved in the app, but it could not be added to your '
+                    'gallery.',
+          ),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: _openFrames,
+          ),
         ));
     } on MockLocationException {
       HapticFeedback.vibrate();
       if (mounted) {
-        _showBlocked('Location is being faked by another app, so the frame was '
-            'not signed. Turn off the mock location app and try again.');
+        _showBlocked('Another app is faking your location, so the photo was '
+            'not signed. Turn off that app and try again.');
       }
     } catch (e) {
       HapticFeedback.vibrate();
-      if (mounted) _showBlocked('Capture failed. $e');
+      // Show the real reason. A capture that fails silently, or behind a
+      // generic message, is impossible to report and impossible to fix.
+      if (mounted) _showBlocked('The photo could not be saved. $e');
     } finally {
       if (mounted) setState(() => _capturing = false);
     }
@@ -336,7 +375,9 @@ class _CameraScreenState extends State<CameraScreen>
   void _openFrames() {
     HapticFeedback.selectionClick();
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const FramesScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => const FramesScreen(standalone: true),
+      ),
     );
   }
 
@@ -346,15 +387,15 @@ class _CameraScreenState extends State<CameraScreen>
   Widget build(BuildContext context) {
     if (_permissionError != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Viewfinder')),
+        appBar: AppBar(title: const Text('Camera')),
         body: Padding(
           padding: const EdgeInsets.all(Tokens.spaceBase),
           child: ErrorState(
             message: _permissionError!.permanentlyDenied
                 ? '${_permissionError!.permissionName} access is turned off. '
-                    'Enable it in system settings to capture frames.'
+                    'Turn it on in your phone settings to take photos.'
                 : '${_permissionError!.permissionName} access is needed to '
-                    'stamp and sign frames.',
+                    'stamp and sign your photos.',
             actionLabel: _permissionError!.permanentlyDenied
                 ? 'Open settings'
                 : 'Allow ${_permissionError!.permissionName.toLowerCase()}',
@@ -367,12 +408,12 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (_locationOff) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Viewfinder')),
+        appBar: AppBar(title: const Text('Camera')),
         body: Padding(
           padding: const EdgeInsets.all(Tokens.spaceBase),
           child: ErrorState(
-            message: 'Location is switched off, so a frame cannot be stamped. '
-                'Turn it on and the viewfinder starts on its own.',
+            message: 'Location is turned off, so a photo cannot be stamped. '
+                'Turn it on and the camera starts on its own.',
             actionLabel: 'Open location settings',
             onAction: () => Geolocator.openLocationSettings(),
           ),
@@ -382,7 +423,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Viewfinder')),
+        appBar: AppBar(title: const Text('Camera')),
         body: Padding(
           padding: const EdgeInsets.all(Tokens.spaceBase),
           child: ErrorState(
@@ -396,13 +437,13 @@ class _CameraScreenState extends State<CameraScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Viewfinder'),
+        title: const Text('Camera'),
         actions: <Widget>[
           Padding(
             padding: const EdgeInsets.only(right: Tokens.spaceBase),
             child: IconButtonTile(
               icon: _torchOn ? Icons.wb_sunny : Icons.wb_sunny_outlined,
-              semanticLabel: 'Torch',
+              semanticLabel: 'Flashlight',
               color: _torchOn ? Tokens.accent : null,
               onPressed: _toggleTorch,
             ),
@@ -542,19 +583,19 @@ class _StatusReadout extends StatelessWidget {
     final String text;
     final Color tint;
     if (p == null) {
-      text = 'no fix — searching';
+      text = 'no gps — searching';
       tint = Tokens.statusAlert;
     } else if (mocked) {
-      text = 'fix faked — blocked';
+      text = 'gps faked — blocked';
       tint = Tokens.statusAlert;
     } else if (stale) {
-      text = 'fix ±${p.accuracy.round()}m — stale';
+      text = 'gps ±${p.accuracy.round()}m — old';
       tint = Tokens.statusAlert;
     } else if (p.accuracy > _weakFixMetres) {
-      text = 'fix ±${p.accuracy.round()}m — weak';
+      text = 'gps ±${p.accuracy.round()}m — weak';
       tint = Tokens.statusAlert;
     } else {
-      text = 'fix ±${p.accuracy.round()}m';
+      text = 'gps ±${p.accuracy.round()}m';
       tint = Tokens.statusOk;
     }
 
@@ -594,7 +635,7 @@ class _StampCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(site ?? 'Locating site', style: p.cardTitle),
+          Text(site ?? 'Finding the place', style: p.cardTitle),
           const SizedBox(height: Tokens.spaceHair),
           Text(
             pos == null
@@ -683,7 +724,7 @@ class _FramesButton extends StatelessWidget {
         borderRadius: Tokens.brControl,
         padding: EdgeInsets.zero,
         color: p.surfaceInset,
-        semanticLabel: 'Frames. $count captured this session',
+        semanticLabel: 'Photos. $count taken this time',
         child: ClipRRect(
           borderRadius: Tokens.brControl,
           child: bytes == null
@@ -721,7 +762,7 @@ class _Shutter extends StatelessWidget {
         color: live ? Tokens.accent : p.surfaceInset,
         borderRadius: Tokens.brControl,
         padding: EdgeInsets.zero,
-        semanticLabel: 'Capture frame',
+        semanticLabel: 'Take a photo',
         child: busy
             ? const Padding(
                 padding: EdgeInsets.all(Tokens.spaceBase),
