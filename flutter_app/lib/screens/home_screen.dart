@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../config.dart';
+import '../services/account_service.dart';
 import '../services/device_service.dart';
+import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
 import 'camera_screen.dart';
+import 'inbox_screen.dart';
+import 'senders_screen.dart';
 import 'verify_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -28,13 +33,15 @@ class HomeScreen extends StatelessWidget {
         Tokens.spaceSection,
       ),
       children: <Widget>[
-        Text('Capture now.\nVerify anytime.', style: p.display),
+        Text('Take a photo.\nCheck it anytime.', style: p.display),
         const SizedBox(height: Tokens.spaceSection),
         ActionButton(
-          label: 'Open viewfinder',
+          label: 'Open camera',
           icon: Icons.photo_camera_outlined,
           onPressed: () => _open(context, const CameraScreen()),
         ),
+        const SizedBox(height: Tokens.spaceSection),
+        const _AccountBanner(),
         const SizedBox(height: Tokens.spaceSection),
         const SectionHead(title: 'Tools'),
         const SizedBox(height: Tokens.spaceSnug),
@@ -44,28 +51,46 @@ class HomeScreen extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: TabCard(
-                  icon: Icons.center_focus_strong_outlined,
-                  tint: Tokens.statusOk,
-                  title: 'Viewfinder',
-                  meta: const <String>['stamp + sign'],
-                  onTap: () => _open(context, const CameraScreen()),
+                  icon: Icons.fact_check_outlined,
+                  tint: Tokens.tintInfo,
+                  title: 'Check a photo',
+                  meta: const <String>['4 checks'],
+                  onTap: () => _open(context, const VerifyScreen()),
                 ),
               ),
               const SizedBox(width: Tokens.spaceSnug),
               Expanded(
                 child: TabCard(
-                  icon: Icons.fact_check_outlined,
-                  tint: Tokens.tintInfo,
-                  title: 'Check a frame',
-                  meta: const <String>['4 checks'],
-                  onTap: () => _open(context, const VerifyScreen()),
+                  icon: Icons.people_outline,
+                  tint: Tokens.statusOk,
+                  title: 'Senders',
+                  meta: const <String>['share code'],
+                  onTap: () => _open(context, const SendersScreen()),
                 ),
               ),
             ],
           ),
         ),
+        // Only reachable with an account: a locked photo has to be addressed
+        // to somebody, so there is nothing to show when signed out.
+        if (AppConfig.accountsEnabled) ...<Widget>[
+          const SizedBox(height: Tokens.spaceSnug),
+          ValueListenableBuilder<Account?>(
+            valueListenable: AccountService.current,
+            builder: (BuildContext context, Account? account, _) {
+              if (account == null) return const SizedBox.shrink();
+              return TabCard(
+                icon: Icons.inbox_outlined,
+                tint: Tokens.tintCool,
+                title: 'Sent to you',
+                meta: const <String>['locked photos'],
+                onTap: () => _open(context, const InboxScreen()),
+              );
+            },
+          ),
+        ],
         const SizedBox(height: Tokens.spaceBase),
-        const SectionHead(title: 'This device'),
+        const SectionHead(title: 'This phone'),
         const SizedBox(height: Tokens.spaceSnug),
         const _DeviceCard(),
       ],
@@ -85,6 +110,7 @@ class _DeviceCard extends StatefulWidget {
 class _DeviceCardState extends State<_DeviceCard> {
   final DeviceService _device = DeviceService();
   final SecurityService _security = SecurityService();
+  final IdentityService _identity = IdentityService();
 
   late final Future<_Identity> _future = _load();
   bool _expanded = false;
@@ -92,7 +118,8 @@ class _DeviceCardState extends State<_DeviceCard> {
   Future<_Identity> _load() async {
     final DeviceFingerprint fp = await _device.resolve();
     final Map<String, String> keys = await _security.keyDiagnostics();
-    return _Identity(fp, keys);
+    final PortableIdentity id = await _identity.identity();
+    return _Identity(fp, keys, id);
   }
 
   @override
@@ -103,14 +130,14 @@ class _DeviceCardState extends State<_DeviceCard> {
       builder: (BuildContext context, AsyncSnapshot<_Identity> snap) {
         if (snap.hasError) {
           return const ErrorState(
-            message: 'Device identity could not be read. Restart the app to '
-                'try again.',
+            message: 'Your phone details could not be read. Restart the app '
+                'to try again.',
           );
         }
 
         final _Identity? id = snap.data;
         if (id == null) {
-          return const LoadingState(message: 'Reading hardware identity');
+          return const LoadingState(message: 'Reading phone details');
         }
 
         final bool fallback = id.fingerprint.usedFallback;
@@ -136,16 +163,20 @@ class _DeviceCardState extends State<_DeviceCard> {
                     ),
                   ),
                   StatusBadge(
-                    label: fallback ? 'fallback' : 'bound',
+                    label: fallback ? 'backup' : 'secure',
                     color: fallback ? Tokens.statusWarn : Tokens.statusOk,
                   ),
                 ],
               ),
               const SizedBox(height: Tokens.spaceBase),
-              DataLine(label: 'Device', value: id.fingerprint.shortId),
+              DataLine(label: 'Phone', value: id.fingerprint.shortId),
               DataLine(
-                label: 'Signing key',
-                value: id.keys['Active key id'] ?? '—',
+                label: 'Your sharing code',
+                value: id.portable.readableFingerprint,
+              ),
+              DataLine(
+                label: 'Old local key',
+                value: id.keys['Key id'] ?? '—',
               ),
               if (fallback) ...<Widget>[
                 const SizedBox(height: Tokens.spaceSnug),
@@ -153,9 +184,9 @@ class _DeviceCardState extends State<_DeviceCard> {
                   accent: Tokens.statusWarn,
                   background: p.canvas,
                   child: Text(
-                    'No hardware identifier available, so the key is bound to a '
-                    'stored fallback. Frames signed here stay valid on this '
-                    'install only.',
+                    'This phone has no ID we can use, so a backup key is saved '
+                    'instead. Photos signed here stay valid only while the app '
+                    'stays installed.',
                     style: p.body,
                   ),
                 ),
@@ -199,7 +230,116 @@ class _DeviceCardState extends State<_DeviceCard> {
 }
 
 class _Identity {
-  const _Identity(this.fingerprint, this.keys);
+  const _Identity(this.fingerprint, this.keys, this.portable);
   final DeviceFingerprint fingerprint;
   final Map<String, String> keys;
+
+  /// The keypair that actually signs photos now, and whose public half every
+  /// capture carries so other phones can check it.
+  final PortableIdentity portable;
+}
+
+
+/// Sign-in state, on the first screen rather than buried two taps deep.
+///
+/// It also has to explain *why* there is no sign-in button when accounts were
+/// not configured at build time. Silently hiding the feature is what made it
+/// look like sign-in had never been built.
+class _AccountBanner extends StatefulWidget {
+  const _AccountBanner();
+
+  @override
+  State<_AccountBanner> createState() => _AccountBannerState();
+}
+
+class _AccountBannerState extends State<_AccountBanner> {
+  final AccountService _account = AccountService();
+
+  @override
+  void initState() {
+    super.initState();
+    // Best effort: a failure here just leaves the signed-out state showing.
+    if (AppConfig.accountsEnabled) {
+      _account.restore().catchError((_) => null);
+    }
+  }
+
+  void _openSenders() {
+    HapticFeedback.mediumImpact();
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const SendersScreen()))
+        .then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    if (!AppConfig.accountsEnabled) {
+      return AccentPanel(
+        accent: Tokens.statusWarn,
+        background: p.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Google sign-in is off in this build', style: p.cardTitle),
+            const SizedBox(height: Tokens.spaceTight),
+            Text(
+              'The app was built without a Google client id, so there is '
+              'nothing to sign in to yet. Everything else works: take photos, '
+              'check them, and share your code by hand.',
+              style: p.body,
+            ),
+            const SizedBox(height: Tokens.spaceTight),
+            Text(AppConfig.setupHint, style: p.dataSmall),
+          ],
+        ),
+      );
+    }
+
+    return ValueListenableBuilder<Account?>(
+      valueListenable: AccountService.current,
+      builder: (BuildContext context, Account? account, _) {
+        final bool signedIn = account != null;
+        return PressCard(
+          onTap: _openSenders,
+          child: Row(
+            children: <Widget>[
+              IconTile(
+                icon: signedIn ? Icons.person : Icons.login,
+                color: signedIn ? Tokens.statusOk : Tokens.accent,
+              ),
+              const SizedBox(width: Tokens.spaceSnug),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      signedIn
+                          ? (account.username != null
+                              ? '@${account.username}'
+                              : 'Pick a username')
+                          : 'Sign in with Google',
+                      style: p.cardTitle,
+                    ),
+                    const SizedBox(height: Tokens.spaceHair),
+                    Text(
+                      signedIn
+                          ? 'Friends can find you by name'
+                          : 'So friends can find you by name',
+                      style: p.dataSmall,
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: p.textSecondary),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

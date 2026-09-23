@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
+import 'package:geoguard/services/identity_service.dart';
 import 'package:geoguard/services/security_service.dart';
 
 /// In-memory stand-in for the Keystore/Keychain so the signing pipeline can be
@@ -87,10 +89,14 @@ void main() {
       deviceId: 'a' * 64,
     );
 
-    expect(signed.signingKey, isNotNull);
-    expect(signed.envelope.kid, signed.signingKey!.kid);
+    // v6 signs with a portable keypair, so the photo carries the public half
+    // and names the key by its fingerprint.
     expect(signed.envelope.version, SecurityService.envelopeVersion);
-    expect(signed.envelope.signature.length, 64); // hex SHA-256
+    expect(signed.envelope.isPortable, isTrue);
+    expect(
+      signed.envelope.kid,
+      IdentityService.fingerprintOf(signed.envelope.publicKey!),
+    );
 
     final SignedEnvelope? recovered =
         security.extractEnvelope(signed.pngBytes);
@@ -99,8 +105,141 @@ void main() {
     expect(recovered!.lat, closeTo(15.8497, 1e-9));
     expect(recovered.deviceId, 'a' * 64);
     expect(recovered.kid, signed.envelope.kid);
+    expect(recovered.publicKey, signed.envelope.publicKey);
     expect(recovered.signature, signed.envelope.signature);
 
+    expect(await security.verifySignature(recovered), isTrue);
+  });
+
+  test('the sharing code fingerprint matches the one the server derives', () {
+    // The directory derives this same value in Node:
+    //   createHash('sha256').update(code, 'utf8').digest('hex').slice(0, 16)
+    // If the two ever drift, the code shown in the app and the code shown in
+    // the directory stop matching, and two users comparing them out loud are
+    // told they have a problem when they do not.
+    const String code = 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA=';
+    expect(IdentityService.fingerprintOf(code), '11d9716362f33de9');
+  });
+
+  test('a photo signed on one phone verifies on another', () async {
+    // The whole point of v6. Sign with one identity...
+    final SignedImage signed = await security.signAndEmbed(
+      jpegBytes: _syntheticJpeg(),
+      position: _position(),
+      timestampUtc: DateTime.utc(2026, 3, 1, 12),
+      deviceId: 'a' * 64,
+    );
+
+    // ...then check it on a second install that shares no stored state at all:
+    // empty Keystore, its own identity, its own device seed.
+    final _FakeSecureStore otherPhone = _FakeSecureStore()..install();
+    final SecurityService theirs = SecurityService();
+
+    final SignedEnvelope? recovered =
+        theirs.extractEnvelope(signed.pngBytes);
+    expect(recovered, isNotNull);
+
+    final SignatureCheck check = await theirs.verifySignatureDetailed(
+      recovered!,
+    );
+
+    expect(check.valid, isTrue,
+        reason: 'a shared photo must verify on a phone that did not take it');
+    expect(check.trust, SignerTrust.unknownPhone);
+    expect(check.signerPublicKey, signed.envelope.publicKey);
+
+    // The second phone generated an identity of its own along the way, so the
+    // two are genuinely distinct installs.
+    expect(otherPhone.values.keys,
+        contains('geoguard_identity_p256_v6'));
+  });
+
+  test('saving the sender names them on the next check', () async {
+    final SignedImage signed = await security.signAndEmbed(
+      jpegBytes: _syntheticJpeg(),
+      position: _position(),
+      timestampUtc: DateTime.utc(2026, 3, 1, 12),
+      deviceId: 'a' * 64,
+    );
+
+    _FakeSecureStore().install();
+    final IdentityService theirIdentity = IdentityService();
+    final SecurityService theirs =
+        SecurityService(identityService: theirIdentity);
+
+    final SignedEnvelope recovered =
+        theirs.extractEnvelope(signed.pngBytes)!;
+
+    expect(
+      (await theirs.verifySignatureDetailed(recovered)).trust,
+      SignerTrust.unknownPhone,
+    );
+
+    await theirIdentity.saveContact(
+      publicKeyB64: recovered.publicKey!,
+      name: 'Ravi',
+    );
+
+    final SignatureCheck after =
+        await theirs.verifySignatureDetailed(recovered);
+    expect(after.valid, isTrue);
+    expect(after.trust, SignerTrust.savedContact);
+    expect(after.signerName, 'Ravi');
+    expect(after.signerLabel, 'Ravi');
+  });
+
+  test('a forged public key does not validate a stolen signature', () async {
+    final SignedImage signed = await security.signAndEmbed(
+      jpegBytes: _syntheticJpeg(),
+      position: _position(),
+      timestampUtc: DateTime.utc(2026, 3, 1, 12),
+      deviceId: 'a' * 64,
+    );
+
+    // Swapping in an attacker's own public key changes the canonical form the
+    // signature covers, so the lift fails rather than silently re-attributing
+    // the photo.
+    final SignedEnvelope stolen = SignedEnvelope(
+      lat: signed.envelope.lat,
+      lon: signed.envelope.lon,
+      alt: signed.envelope.alt,
+      timestampMs: signed.envelope.timestampMs,
+      deviceId: signed.envelope.deviceId,
+      pixelHash: signed.envelope.pixelHash,
+      sceneTiles: signed.envelope.sceneTiles,
+      signature: signed.envelope.signature,
+      kid: signed.envelope.kid,
+      publicKey: IdentityService.generate().publicKeyB64,
+    );
+
+    expect(await security.verifySignature(stolen), isFalse);
+  });
+
+  test('the whole capture pipeline runs inside a background isolate', () async {
+    // Capture hands this to Isolate.run so the shutter does not freeze the UI.
+    // An isolate cannot reach a platform channel, so anything that quietly
+    // depends on one fails here rather than on a user's phone.
+    final PortableIdentity id = IdentityService.generate();
+
+    final CaptureJob job = CaptureJob(
+      rawJpeg: _syntheticJpeg(),
+      latitude: 15.8497,
+      longitude: 74.4977,
+      altitude: 751.3,
+      timestampUtc: DateTime.utc(2026, 3, 1, 12),
+      deviceId: 'b' * 64,
+      addressText: 'Tilakwadi, Belagavi, Karnataka, India',
+      privateKeyBytes: id.privateKeyBytes,
+      publicKeyB64: id.publicKeyB64,
+    );
+
+    final SignedImage signed = await Isolate.run(() => composeSignedFrame(job));
+
+    expect(signed.envelope.publicKey, id.publicKeyB64);
+    expect(signed.envelope.protectsScene, isTrue);
+
+    final SignedEnvelope recovered =
+        security.extractEnvelope(signed.pngBytes)!;
     expect(await security.verifySignature(recovered), isTrue);
   });
 

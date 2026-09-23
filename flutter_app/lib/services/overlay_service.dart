@@ -1,30 +1,36 @@
-import 'dart:typed_data';
-
 import 'package:geocoding/geocoding.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 
+/// Burns the GPS stamp into a captured frame.
+///
+/// Every method here is pure pixel work: no network, no plugins, no encoding.
+/// That is deliberate — this runs inside the capture isolate, where platform
+/// channels are unreachable, and it used to block the shutter for seconds by
+/// reverse-geocoding over the network mid-capture. The address is resolved
+/// ahead of time by [resolveAddress] on the UI isolate and handed in.
 class OverlayService {
   static const int _patternSpacing = 4;
   static final img.ColorRgba8 _patternColorA = img.ColorRgba8(230, 150, 60, 255);
   static final img.ColorRgba8 _patternColorB = img.ColorRgba8(40, 90, 150, 255);
 
-  static Future<Uint8List> applyGpsStamp({
-    required Uint8List imageBytes,
-    required Position position,
-    required DateTime timestamp,
-  }) async {
-    final img.Image? originalImage = img.decodeImage(imageBytes);
-    if (originalImage == null) return imageBytes;
+  static const String fallbackAddress = 'Location not named';
 
-    final String addressText = await _resolveAddress(position);
+  /// Draws the stamp directly onto [image]. Mutates in place and encodes
+  /// nothing — the caller encodes once, at the end of the pipeline.
+  static void drawStamp(
+    img.Image image, {
+    required double latitude,
+    required double longitude,
+    required DateTime timestampUtc,
+    required String addressText,
+  }) {
+    final String latStr = 'Lat ${latitude.toStringAsFixed(6)} deg';
+    final String longStr = 'Long ${longitude.toStringAsFixed(6)} deg';
 
-    final String latStr = 'Lat ${position.latitude.toStringAsFixed(6)} deg';
-    final String longStr = 'Long ${position.longitude.toStringAsFixed(6)} deg';
     // Format per the design system: `21AUG26 09:14`. The UTC offset is read
     // from the device rather than hardcoded to a single region.
-    final DateTime local = timestamp.toLocal();
+    final DateTime local = timestampUtc.toLocal();
     final Duration offset = local.timeZoneOffset;
     final String sign = offset.isNegative ? '-' : '+';
     final Duration abs = offset.abs();
@@ -34,18 +40,18 @@ class OverlayService {
         '${DateFormat('ddMMMyy HH:mm').format(local).toUpperCase()} '
         'UTC$offsetStr';
 
-    final int width = originalImage.width;
-    final int height = originalImage.height;
+    final int width = image.width;
+    final int height = image.height;
     final int bannerHeight = (height * 0.18).toInt();
     final int bannerY = height - bannerHeight;
 
-    // 1. Global Micro-Watermark Noise Across Whole Image
-    _applyGlobalAntiAiGrid(originalImage);
+    // 1. Global micro-watermark noise across the whole image.
+    _applyGlobalAntiAiGrid(image);
 
     // 2. Stamp panel — sand at 92%. A panel, not a drop shadow: text with a
     //    shadow alone fails on bright sky and on dark shed interiors.
     img.fillRect(
-      originalImage,
+      image,
       x1: 0,
       y1: bannerY,
       x2: width,
@@ -53,11 +59,11 @@ class OverlayService {
       color: img.ColorRgba8(240, 237, 228, 235),
     );
 
-    // 3. Left accent bar, 3px of `signal`, scaled with the image so it stays
-    //    visible on a full-resolution frame.
+    // 3. Left accent bar, scaled with the image so it stays visible on a
+    //    full-resolution frame.
     final int barWidth = (width * 0.006).clamp(3, 24).toInt();
     img.fillRect(
-      originalImage,
+      image,
       x1: 0,
       y1: bannerY,
       x2: barWidth,
@@ -68,7 +74,7 @@ class OverlayService {
     // 4. Dual-tone anti-AI pattern, kept at full amplitude but confined to a
     //    strip below the text so it never fights legibility.
     final int patternTop = height - (bannerHeight * 0.18).toInt();
-    _drawAntiAiPattern(originalImage, patternTop, height, width);
+    _drawAntiAiPattern(image, patternTop, height, width);
 
     // Stamp type is a percentage of image height, never a fixed px — scaling a
     // screen-rendered overlay up produces soft, unusable text.
@@ -81,7 +87,7 @@ class OverlayService {
 
     // Line 1 — site name.
     img.drawString(
-      originalImage,
+      image,
       addressText.toUpperCase(),
       font: font,
       x: left,
@@ -92,7 +98,7 @@ class OverlayService {
 
     // Line 2 — coordinates.
     img.drawString(
-      originalImage,
+      image,
       '$latStr   $longStr',
       font: font,
       x: left,
@@ -103,15 +109,13 @@ class OverlayService {
 
     // Line 3 — date and time.
     img.drawString(
-      originalImage,
+      image,
       timeStr,
       font: font,
       x: left,
       y: currentY,
       color: img.ColorRgba8(90, 107, 95, 255), // ink-soft
     );
-
-    return Uint8List.fromList(img.encodeJpg(originalImage, quality: 95));
   }
 
   static void _applyGlobalAntiAiGrid(img.Image image) {
@@ -146,8 +150,8 @@ class OverlayService {
             y,
             _patternColorA.r.toInt(),
             _patternColorA.g.toInt(),
-              _patternColorA.b.toInt(),
-              _patternColorA.a.toInt(),
+            _patternColorA.b.toInt(),
+            _patternColorA.a.toInt(),
           );
         } else if (cell % 3 == 0) {
           image.setPixelRgba(
@@ -163,18 +167,17 @@ class OverlayService {
     }
   }
 
-  static Future<String> _resolveAddress(Position position) async {
-    const String fallback = 'Belagavi, Karnataka, India';
+  /// Reverse-geocodes a coordinate into the line printed on the stamp.
+  ///
+  /// Call this *before* the shutter, never during: it is a network round trip.
+  static Future<String> resolveAddress(double latitude, double longitude) async {
     try {
-      final List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
-      if (placemarks.isEmpty) return fallback;
+      final List<Placemark> placemarks =
+          await placemarkFromCoordinates(latitude, longitude);
+      if (placemarks.isEmpty) return fallbackAddress;
 
       final Placemark p = placemarks.first;
-      final List<String> parts = [
+      final List<String> parts = <String>[
         if (p.street != null && p.street!.isNotEmpty) p.street!,
         if (p.subLocality != null && p.subLocality!.isNotEmpty) p.subLocality!,
         if (p.locality != null && p.locality!.isNotEmpty) p.locality!,
@@ -183,9 +186,9 @@ class OverlayService {
         if (p.country != null && p.country!.isNotEmpty) p.country!,
       ];
 
-      return parts.isNotEmpty ? parts.join(', ') : fallback;
+      return parts.isNotEmpty ? parts.join(', ') : fallbackAddress;
     } catch (_) {
-      return fallback;
+      return fallbackAddress;
     }
   }
 }

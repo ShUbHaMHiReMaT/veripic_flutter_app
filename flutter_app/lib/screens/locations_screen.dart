@@ -47,6 +47,21 @@ class _LocationsScreenState extends State<LocationsScreen>
 
   static const double _focusZoom = 16;
 
+  @override
+  void initState() {
+    super.initState();
+    // Same reason as the Frames tab: this screen sits in an IndexedStack and
+    // is never rebuilt on tab change, so it has to be told when a capture
+    // lands.
+    FrameStore.revision.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    FrameStore.revision.removeListener(_refresh);
+    super.dispose();
+  }
+
   Future<List<_Pin>> _load() async {
     final List<StoredFrame> frames = await _store.list();
     final List<_Pin> pins = <_Pin>[];
@@ -70,6 +85,7 @@ class _LocationsScreenState extends State<LocationsScreen>
   }
 
   Future<void> _refresh() async {
+    if (!mounted) return;
     setState(() {
       _future = _load();
       _selected = 0;
@@ -117,13 +133,13 @@ class _LocationsScreenState extends State<LocationsScreen>
         if (snap.connectionState != ConnectionState.done) {
           return const Padding(
             padding: EdgeInsets.all(Tokens.spaceBase),
-            child: LoadingState(message: 'Reading capture locations'),
+            child: LoadingState(message: 'Loading your places'),
           );
         }
 
         if (snap.hasError) {
           return ErrorState(
-            message: 'Capture locations could not be read. Try again.',
+            message: 'Your places could not be loaded. Try again.',
             actionLabel: 'Try again',
             onAction: _refresh,
           );
@@ -133,10 +149,9 @@ class _LocationsScreenState extends State<LocationsScreen>
         if (pins.isEmpty) {
           return const EmptyState(
             icon: Icons.place_outlined,
-            title: 'No locations yet',
-            message: 'Every frame you capture is pinned here by the '
-                'coordinates sealed into it. Take a frame to place the first '
-                'pin.',
+            title: 'No places yet',
+            message: 'Every photo you take is pinned here using the location '
+                'saved inside it. Take a photo to add your first pin.',
           );
         }
 
@@ -306,7 +321,7 @@ class _MapPin extends StatelessWidget {
     return Semantics(
       button: true,
       selected: active,
-      label: 'Capture location',
+      label: 'Photo location',
       child: GestureDetector(
         onTap: onTap,
         behavior: HitTestBehavior.opaque,
@@ -369,7 +384,7 @@ class _PinList extends StatelessWidget {
           if (i == 0) {
             return Padding(
               padding: const EdgeInsets.only(bottom: Tokens.spaceHair),
-              child: SectionHead(title: '${pins.length} pinned'),
+              child: SectionHead(title: '${pins.length} places'),
             );
           }
 
@@ -381,7 +396,7 @@ class _PinList extends StatelessWidget {
             onTap: () => onTap(index, pin),
             color: active ? Tokens.accent : p.surface,
             padding: const EdgeInsets.all(Tokens.spaceSnug),
-            semanticLabel: 'Capture at '
+            semanticLabel: 'Photo taken at '
                 '${pin.point.latitude.toStringAsFixed(5)}, '
                 '${pin.point.longitude.toStringAsFixed(5)}',
             child: Row(
@@ -419,7 +434,7 @@ class _PinList extends StatelessWidget {
                 ),
                 IconButtonTile(
                   icon: Icons.open_in_full,
-                  semanticLabel: 'Open frame',
+                  semanticLabel: 'Open photo',
                   onPressed: () {
                     HapticFeedback.selectionClick();
                     Navigator.of(context).push(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/frame_store.dart';
 import '../theme/theme_controller.dart';
 import '../theme/veripic_theme.dart';
 import 'frames_screen.dart';
@@ -17,12 +18,41 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A capture taken while the shell was backgrounded (the camera is pushed
+    // over it) has to show up when the user comes back.
+    if (state == AppLifecycleState.resumed) FrameStore.notifyChanged();
+  }
+
+  /// Re-reads the store whenever a listing tab is opened.
+  ///
+  /// The capture pipeline already signals a change, but this screen must not
+  /// depend on a single in-process notification arriving: anything that writes
+  /// a frame while these tabs are alive is picked up here regardless.
+  void _select(int index) {
+    if (index != 0) FrameStore.notifyChanged();
+    setState(() => _index = index);
+  }
 
   static const List<String> _titles = <String>[
     'GeoGuard',
-    'Frames',
+    'Photos',
     'Locations'
   ];
 
@@ -78,15 +108,15 @@ class _AppShellState extends State<AppShell> {
                   label: 'Home',
                   selected: _index == 0,
                   tint: Tokens.accent,
-                  onTap: () => setState(() => _index = 0),
+                  onTap: () => _select(0),
                 ),
                 const SizedBox(width: Tokens.spaceTight),
                 _NavTab(
                   icon: Icons.photo_library_outlined,
-                  label: 'Frames',
+                  label: 'Photos',
                   selected: _index == 1,
                   tint: Tokens.tintInfo,
-                  onTap: () => setState(() => _index = 1),
+                  onTap: () => _select(1),
                 ),
                 const SizedBox(width: Tokens.spaceTight),
                 _NavTab(
@@ -94,7 +124,7 @@ class _AppShellState extends State<AppShell> {
                   label: 'Locations',
                   selected: _index == 2,
                   tint: Tokens.statusOk,
-                  onTap: () => setState(() => _index = 2),
+                  onTap: () => _select(2),
                 ),
               ],
             ),

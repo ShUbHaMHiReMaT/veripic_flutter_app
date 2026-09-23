@@ -8,6 +8,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 
 import 'device_service.dart';
+import 'identity_service.dart';
+import 'overlay_service.dart';
 
 /// How a signing key came to exist. Surfaced in the verification UI so an
 /// operator can tell a hardware-bound signature from a legacy one.
@@ -20,9 +22,16 @@ enum SigningKeyOrigin {
 }
 
 extension SigningKeyOriginLabel on SigningKeyOrigin {
+  /// Precise wording, used on the evidence certificate.
   String get label => switch (this) {
         SigningKeyOrigin.hardwareDerived => 'Hardware-derived (HKDF-SHA256)',
         SigningKeyOrigin.legacyRandom => 'Legacy random secret (v3)',
+      };
+
+  /// Plain wording for the app's screens.
+  String get plainLabel => switch (this) {
+        SigningKeyOrigin.hardwareDerived => 'Made from this phone',
+        SigningKeyOrigin.legacyRandom => 'An older saved key',
       };
 
   String get storageCode => switch (this) {
@@ -89,13 +98,41 @@ class SigningKey {
       );
 }
 
-/// Result of an HMAC check, including *which* key matched.
+/// Result of a signature check, including *which* key matched and how much
+/// this phone knows about whoever holds it.
 class SignatureCheck {
-  const SignatureCheck({required this.valid, this.matchedKey, this.note});
+  const SignatureCheck({
+    required this.valid,
+    this.matchedKey,
+    this.note,
+    this.trust = SignerTrust.localOnly,
+    this.signerName,
+    this.signerPublicKey,
+  });
 
   final bool valid;
   final SigningKey? matchedKey;
   final String? note;
+
+  /// How much this phone knows about the signer. Deliberately separate from
+  /// [valid]: a valid signature proves the photo is unedited, not who took it.
+  final SignerTrust trust;
+
+  /// Name the user saved this sender under, when they saved one.
+  final String? signerName;
+
+  /// The portable public key that verified the photo, base64. Null for older
+  /// photos that were verified against the local HMAC ring.
+  final String? signerPublicKey;
+
+  /// True when the photo carries a portable key, so any phone can check it.
+  bool get isPortable => signerPublicKey != null;
+
+  /// One line naming the signer, in plain words.
+  String get signerLabel => switch (trust) {
+        SignerTrust.savedContact => signerName ?? 'A saved contact',
+        _ => trust.plainLabel,
+      };
 
   SigningKeyOrigin? get origin => matchedKey?.origin;
 }
@@ -111,6 +148,7 @@ class SignedEnvelope {
     required this.signature,
     this.sceneTiles = const <String>[],
     this.kid,
+    this.publicKey,
     this.version = SecurityService.envelopeVersion,
   });
 
@@ -129,17 +167,34 @@ class SignedEnvelope {
   final String signature;
 
   /// Key identifier. Null for pre-v4 envelopes signed before key ring support.
+  ///
+  /// For v6 this is the fingerprint of [publicKey].
   final String? kid;
+
+  /// Base64 compressed P-256 public key of whoever signed this photo (v6+).
+  ///
+  /// This is what makes a photo checkable on a phone other than the one that
+  /// took it. Envelopes up to v5 carried an HMAC signature instead, which only
+  /// the signing device could ever reproduce.
+  final String? publicKey;
 
   final int version;
 
   bool get isHardwareBound => version >= 4 && kid != null;
 
+  /// True when this photo can be checked by any GeoGuard install, offline.
+  bool get isPortable => publicKey != null && publicKey!.isNotEmpty;
+
   /// True when the envelope also protects the photographic content, not just
   /// the stamp banner.
   bool get protectsScene => sceneTiles.isNotEmpty;
 
-  SignedEnvelope copyWith({String? signature, String? kid, int? version}) =>
+  SignedEnvelope copyWith({
+    String? signature,
+    String? kid,
+    String? publicKey,
+    int? version,
+  }) =>
       SignedEnvelope(
         lat: lat,
         lon: lon,
@@ -150,6 +205,7 @@ class SignedEnvelope {
         sceneTiles: sceneTiles,
         signature: signature ?? this.signature,
         kid: kid ?? this.kid,
+        publicKey: publicKey ?? this.publicKey,
         version: version ?? this.version,
       );
 
@@ -163,6 +219,7 @@ class SignedEnvelope {
         if (sceneTiles.isNotEmpty) 'st': sceneTiles,
         'sig': signature,
         if (kid != null) 'kid': kid,
+        if (publicKey != null) 'pk': publicKey,
         'v': version,
       };
 
@@ -180,6 +237,7 @@ class SignedEnvelope {
         ],
         signature: json['sig'] as String? ?? '',
         kid: json['kid'] as String?,
+        publicKey: json['pk'] as String?,
         // Envelopes written before the key ring carried v:3 (or nothing).
         version: (json['v'] as num?)?.toInt() ?? 3,
       );
@@ -198,12 +256,17 @@ class SignedImage {
 }
 
 class SecurityService {
-  SecurityService({FlutterSecureStorage? storage, DeviceService? deviceService})
-      : _storage = storage ?? const FlutterSecureStorage(),
-        _deviceService = deviceService ?? DeviceService();
+  SecurityService({
+    FlutterSecureStorage? storage,
+    DeviceService? deviceService,
+    IdentityService? identityService,
+  })  : _storage = storage ?? const FlutterSecureStorage(),
+        _deviceService = deviceService ?? DeviceService(),
+        _identity = identityService ?? IdentityService();
 
   final FlutterSecureStorage _storage;
   final DeviceService _deviceService;
+  final IdentityService _identity;
 
   // ---------------------------------------------------------------------
   // Key derivation parameters (Requirement 1)
@@ -222,7 +285,10 @@ class SecurityService {
   static const int hkdfKeyLength = 32;
 
   /// Current envelope schema version.
-  static const int envelopeVersion = 5;
+  ///
+  /// v6 replaced the device-bound HMAC with a portable P-256 signature, which
+  /// is what lets one user's photo be checked on another user's phone.
+  static const int envelopeVersion = 6;
 
   /// Key ring (v4+). Holds the active hardware-derived key plus any historical
   /// keys needed to verify older captures.
@@ -407,15 +473,15 @@ class SecurityService {
       final SigningKey active = await activeKey();
       final List<SigningKey> ring = await keyRing();
       return <String, String>{
-        'Key derivation': 'HKDF-SHA256',
-        'Salt': hkdfSalt,
-        'Info': hkdfInfo,
-        'Active key id': active.kid,
-        'Key origin': active.origin.label,
-        'Keys in ring': '${ring.length}',
+        'Key method': 'HKDF-SHA256',
+        'Key salt': hkdfSalt,
+        'Key info': hkdfInfo,
+        'Key id': active.kid,
+        'Key source': active.origin.plainLabel,
+        'Keys saved': '${ring.length}',
       };
     } catch (e) {
-      return <String, String>{'Key derivation': 'unavailable: $e'};
+      return <String, String>{'Key method': 'not available: $e'};
     }
   }
 
@@ -430,66 +496,35 @@ class SecurityService {
   // Signing + embedding
   // =====================================================================
 
+  /// Stamps, hashes, signs and embeds a capture.
+  ///
+  /// Convenience wrapper that fetches the signing identity and then runs the
+  /// pure work. Capture itself calls [composeSignedFrame] from a background
+  /// isolate instead, so the shutter does not block the UI.
   Future<SignedImage> signAndEmbed({
     required Uint8List jpegBytes,
     required Position position,
     required DateTime timestampUtc,
     required String deviceId,
+    String? addressText,
+    IdentityService? identityService,
   }) async {
-    final img.Image? decoded = img.decodeImage(jpegBytes);
-    if (decoded == null) {
-      throw StateError('Could not decode captured image');
-    }
+    final PortableIdentity id =
+        await (identityService ?? IdentityService()).identity();
 
-    final String pixelHash = computeBannerDHash(decoded);
-    final List<String> sceneTiles = computeSceneTiles(decoded);
-    final SigningKey key = await activeKey();
-
-    final SignedEnvelope unsigned = SignedEnvelope(
-      lat: position.latitude,
-      lon: position.longitude,
-      alt: position.altitude,
-      timestampMs: timestampUtc.millisecondsSinceEpoch,
+    return composeSignedFrame(CaptureJob(
+      rawJpeg: jpegBytes,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      altitude: position.altitude,
+      timestampUtc: timestampUtc,
       deviceId: deviceId,
-      pixelHash: pixelHash,
-      sceneTiles: sceneTiles,
-      signature: '',
-      kid: key.kid,
-    );
-
-    final String signature = _hmacHex(key, _canonical(unsigned));
-    final SignedEnvelope envelope = unsigned.copyWith(signature: signature);
-    final String jsonPayload = jsonEncode(envelope.toJson());
-
-    // Embed #1 — EXIF UserComment (survives most metadata-preserving tools).
-    try {
-      decoded.exif.imageIfd['UserComment'] = '$_comMarker$jsonPayload';
-    } catch (_) {
-      // EXIF write is best-effort; the COM + EOF copies still carry the payload.
-    }
-
-    // `image` 4.x keeps `textData` for PNG only — the JPEG encoder drops it —
-    // so the JPEG COM segment below is written by hand instead.
-    decoded.textData ??= <String, String>{};
-    decoded.textData!['Comment'] = '$_comMarker$jsonPayload';
-
-    final Uint8List encoded =
-        Uint8List.fromList(img.encodeJpg(decoded, quality: 95));
-
-    // Embed #2 — real JPEG COM (0xFFFE) segment injected after SOI.
-    final Uint8List withComment =
-        _injectJpegComment(encoded, '$_comMarker$jsonPayload');
-
-    // Embed #3 — EOF payload (survives EXIF stripping).
-    final BytesBuilder builder = BytesBuilder(copy: false)
-      ..add(withComment)
-      ..add(utf8.encode('$_eofMarker$jsonPayload'));
-
-    return SignedImage(
-      pngBytes: builder.toBytes(),
-      envelope: envelope,
-      signingKey: key,
-    );
+      // Null means the frame arrives already stamped, which is what the tests
+      // and any re-signing path want.
+      addressText: addressText,
+      privateKeyBytes: id.privateKeyBytes,
+      publicKeyB64: id.publicKeyB64,
+    ));
   }
 
   /// Inserts a standards-compliant JPEG COM segment directly after the SOI
@@ -774,10 +809,19 @@ class SecurityService {
   Future<SignatureCheck> verifySignatureDetailed(
       SignedEnvelope envelope) async {
     if (envelope.signature.isEmpty) {
-      return const SignatureCheck(valid: false, note: 'Envelope carries no signature');
+      return const SignatureCheck(
+          valid: false, note: 'This photo carries no signature.');
     }
 
     final String canonical = _canonical(envelope);
+
+    // v6+ carries its own public key, so the check needs nothing from this
+    // phone's key ring — which is what lets one user check another user's
+    // photo. Older envelopes fall through to the local HMAC ring below.
+    final String? pk = envelope.publicKey;
+    if (pk != null && pk.isNotEmpty) {
+      return _verifyPortable(envelope, canonical, pk);
+    }
     final List<SigningKey> candidates = <SigningKey>[];
 
     try {
@@ -822,8 +866,66 @@ class SecurityService {
     return SignatureCheck(
       valid: false,
       note: kid != null && candidates.every((SigningKey k) => k.kid != kid)
-          ? 'Signed by key $kid, which this device does not hold.'
-          : 'No key in the device ring reproduces this signature.',
+          ? 'This photo was signed on another phone, in an older format that '
+              'only that phone can check.'
+          : 'No key on this phone reproduces this signature.',
+    );
+  }
+
+  /// Checks a v6 signature against the public key travelling in the photo.
+  ///
+  /// Two separate questions, answered separately on purpose:
+  ///   1. is the photo unedited since it was signed — pure maths, and the
+  ///      answer is the same on every phone;
+  ///   2. who signed it — a trust decision this phone can only answer from
+  ///      keys the user has actually saved.
+  Future<SignatureCheck> _verifyPortable(
+    SignedEnvelope envelope,
+    String canonical,
+    String publicKey,
+  ) async {
+    if (!IdentityService.verify(publicKey, canonical, envelope.signature)) {
+      return SignatureCheck(
+        valid: false,
+        signerPublicKey: publicKey,
+        note: 'The signature does not match this photo, so something in it '
+            'has been changed since it was taken.',
+      );
+    }
+
+    // Mine?
+    try {
+      final PortableIdentity me = await _identity.identity();
+      if (me.publicKeyB64 == publicKey) {
+        return SignatureCheck(
+          valid: true,
+          trust: SignerTrust.thisPhone,
+          signerPublicKey: publicKey,
+          note: 'This phone took it.',
+        );
+      }
+    } catch (_) {
+      // No identity on this install yet — it still cannot be our own photo.
+    }
+
+    // Someone the user has saved?
+    final TrustedContact? contact = await _identity.contactFor(publicKey);
+    if (contact != null) {
+      return SignatureCheck(
+        valid: true,
+        trust: SignerTrust.savedContact,
+        signerName: contact.name,
+        signerPublicKey: publicKey,
+        note: 'Taken by ${contact.name}, a sender you saved.',
+      );
+    }
+
+    return SignatureCheck(
+      valid: true,
+      trust: SignerTrust.unknownPhone,
+      signerPublicKey: publicKey,
+      note: 'The photo has not been changed since it was taken, but you have '
+          'not saved this sender yet, so the app cannot tell you who took it.',
     );
   }
 
@@ -836,6 +938,14 @@ class SecurityService {
   String _canonical(SignedEnvelope e) {
     final String base =
         '${e.lat}|${e.lon}|${e.alt}|${e.timestampMs}|${e.deviceId}|${e.pixelHash}';
+
+    // v6 binds the public key itself, so the key cannot be swapped for another
+    // without invalidating the signature.
+    final String? pk = e.publicKey;
+    if (pk != null && pk.isNotEmpty) {
+      return 'v6|$base|${e.sceneTiles.join(',')}|$pk';
+    }
+
     final String? kid = e.kid;
     if (kid == null) return 'v1|$base';
 
@@ -863,4 +973,122 @@ class SecurityService {
     }
     return diff == 0;
   }
+}
+
+// =======================================================================
+// Capture pipeline — runs in a background isolate
+// =======================================================================
+
+/// Everything the capture isolate needs, as plain sendable data.
+///
+/// No plugin objects and no open handles: an isolate cannot reach a platform
+/// channel, so the signing key material and the reverse-geocoded address are
+/// both resolved on the UI isolate first and passed in here.
+class CaptureJob {
+  const CaptureJob({
+    required this.rawJpeg,
+    required this.latitude,
+    required this.longitude,
+    required this.altitude,
+    required this.timestampUtc,
+    required this.deviceId,
+    required this.privateKeyBytes,
+    required this.publicKeyB64,
+    this.addressText,
+  });
+
+  final Uint8List rawJpeg;
+  final double latitude;
+  final double longitude;
+  final double altitude;
+  final DateTime timestampUtc;
+  final String deviceId;
+
+  /// Pre-resolved place line for the stamp. Null leaves the frame unstamped,
+  /// which is what a re-sign of already-stamped bytes wants.
+  final String? addressText;
+
+  final Uint8List privateKeyBytes;
+  final String publicKeyB64;
+}
+
+/// Stamps, hashes, signs and embeds a capture in a single decode/encode pass.
+///
+/// The old pipeline decoded the full-resolution frame twice and JPEG-encoded
+/// it twice — once to apply the stamp, once to embed the payload — all on the
+/// UI isolate. On a 12MP photo that is seconds of frozen interface. This does
+/// one decode, one encode, and is safe to hand to `Isolate.run`.
+SignedImage composeSignedFrame(CaptureJob job) {
+  final img.Image? decoded = img.decodeImage(job.rawJpeg);
+  if (decoded == null) {
+    throw StateError('Could not decode captured image');
+  }
+
+  // 1. Burn the stamp into the pixels.
+  final String? address = job.addressText;
+  if (address != null) {
+    OverlayService.drawStamp(
+      decoded,
+      latitude: job.latitude,
+      longitude: job.longitude,
+      timestampUtc: job.timestampUtc,
+      addressText: address,
+    );
+  }
+
+  // 2. Hash the stamped pixels, then sign.
+  final SecurityService service = SecurityService();
+  final SignedEnvelope unsigned = SignedEnvelope(
+    lat: job.latitude,
+    lon: job.longitude,
+    alt: job.altitude,
+    timestampMs: job.timestampUtc.millisecondsSinceEpoch,
+    deviceId: job.deviceId,
+    pixelHash: service.computeBannerDHash(decoded),
+    sceneTiles: service.computeSceneTiles(decoded),
+    signature: '',
+    kid: IdentityService.fingerprintOf(job.publicKeyB64),
+    publicKey: job.publicKeyB64,
+  );
+
+  final SignedEnvelope envelope = unsigned.copyWith(
+    signature: IdentityService.sign(
+      job.privateKeyBytes,
+      service._canonical(unsigned),
+    ),
+  );
+  final String jsonPayload = jsonEncode(envelope.toJson());
+
+  // Embed #1 — EXIF UserComment (survives most metadata-preserving tools).
+  try {
+    decoded.exif.imageIfd['UserComment'] =
+        '${SecurityService._comMarker}$jsonPayload';
+  } catch (_) {
+    // Best effort; the COM + EOF copies still carry the payload.
+  }
+
+  // `image` 4.x keeps `textData` for PNG only — the JPEG encoder drops it —
+  // so the JPEG COM segment below is written by hand instead.
+  decoded.textData ??= <String, String>{};
+  decoded.textData!['Comment'] = '${SecurityService._comMarker}$jsonPayload';
+
+  // 3. Encode once.
+  final Uint8List encoded =
+      Uint8List.fromList(img.encodeJpg(decoded, quality: 95));
+
+  // Embed #2 — real JPEG COM (0xFFFE) segment injected after SOI.
+  final Uint8List withComment = service._injectJpegComment(
+    encoded,
+    '${SecurityService._comMarker}$jsonPayload',
+  );
+
+  // Embed #3 — EOF payload (survives EXIF stripping).
+  final BytesBuilder builder = BytesBuilder(copy: false)
+    ..add(withComment)
+    ..add(utf8.encode('${SecurityService._eofMarker}$jsonPayload'));
+
+  return SignedImage(
+    pngBytes: builder.toBytes(),
+    envelope: envelope,
+  );
 }

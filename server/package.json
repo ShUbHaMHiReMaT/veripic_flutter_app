@@ -1,0 +1,24 @@
+{
+  "name": "geoguard-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Accounts and sharing-code directory for the GeoGuard app.",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "google-auth-library": "^9.15.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.13.0"
+  }
+}

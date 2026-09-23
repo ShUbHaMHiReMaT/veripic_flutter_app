@@ -1,14 +1,16 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' show Offset;
 
 import 'package:camera/camera.dart';
 import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'device_service.dart';
+import 'frame_store.dart';
+import 'identity_service.dart';
 import 'overlay_service.dart';
 import 'security_service.dart';
 
@@ -42,6 +44,7 @@ class CaptureResult {
     required this.envelope,
     required this.savedPath,
     this.signingKeyId,
+    this.galleryError,
   });
 
   /// Final signed JPEG bytes — already stamped, signed and embedded.
@@ -58,14 +61,18 @@ class CaptureResult {
 
   /// Key id that produced the signature.
   final String? signingKeyId;
+
+  /// Why the camera-roll export failed, when it did. The signed frame is saved
+  /// either way — the gallery copy is a convenience, not the system of record.
+  final String? galleryError;
 }
 
 class CameraService {
   CameraController? _controller;
   CameraController? get controller => _controller;
 
-  final SecurityService _securityService = SecurityService();
   final DeviceService _deviceService = DeviceService();
+  final IdentityService _identityService = IdentityService();
 
   Future<void> initialize(CameraDescription description) async {
     await _ensurePermissions();
@@ -84,7 +91,17 @@ class CameraService {
     _controller = null;
   }
 
-  Future<CaptureResult> capture() async {
+  /// Takes, stamps, signs and stores one frame.
+  ///
+  /// [livePosition] and [addressText] come from the viewfinder, which already
+  /// holds a validated fix and a resolved place name. Passing them in is what
+  /// keeps the shutter quick: the old path requested a *fresh* best-accuracy
+  /// fix and reverse-geocoded over the network after the shutter was pressed,
+  /// which is seconds of waiting for data the screen was already showing.
+  Future<CaptureResult> capture({
+    Position? livePosition,
+    String? addressText,
+  }) async {
     final CameraController? c = _controller;
     if (c == null || !c.value.isInitialized) {
       throw StateError('Camera not initialized');
@@ -92,38 +109,56 @@ class CameraService {
 
     final DateTime timestamp = DateTime.now().toUtc();
     final Future<XFile> photoFuture = c.takePicture();
-    final Future<Position> posFuture = _readPosition();
+
+    // Reuse the viewfinder's fix when it is fresh; only fall back to asking
+    // the OS for a new one, which is the slow path.
+    final Future<Position> posFuture = livePosition != null
+        ? Future<Position>.value(_checkNotMocked(livePosition))
+        : _readPosition();
+
     final Future<String> deviceIdFuture = _deviceService.getDeviceId();
+    final Future<PortableIdentity> identityFuture = _identityService.identity();
 
     final XFile rawPhoto = await photoFuture;
     final Position position = await posFuture;
     final String deviceId = await deviceIdFuture;
+    final PortableIdentity identity = await identityFuture;
     final Uint8List rawBytes = await rawPhoto.readAsBytes();
 
-    // 1. Burn GPS Stamp onto raw photo
-    final Uint8List stampedBytes = await OverlayService.applyGpsStamp(
-      imageBytes: rawBytes,
-      position: position,
-      timestamp: timestamp,
-    );
-
-    // 2. Sign and Embed Cryptographic Payload on final stamped image
-    final SignedImage signedImage = await _securityService.signAndEmbed(
-      jpegBytes: stampedBytes,
-      position: position,
+    final CaptureJob job = CaptureJob(
+      rawJpeg: rawBytes,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      altitude: position.altitude,
       timestampUtc: timestamp,
       deviceId: deviceId,
+      addressText: addressText ?? OverlayService.fallbackAddress,
+      privateKeyBytes: identity.privateKeyBytes,
+      publicKeyB64: identity.publicKeyB64,
     );
+
+    final SignedImage signedImage = await _composeOffThread(job);
 
     final Uint8List finalBytes = signedImage.pngBytes;
 
-    // 3. Save to Temp File & Export to Gallery
-    final Directory tempDir = await getTemporaryDirectory();
-    final String tempPath =
-        '${tempDir.path}/geoguard_${timestamp.millisecondsSinceEpoch}.png';
-    final File finalFile = await File(tempPath).writeAsBytes(finalBytes);
+    // Store in the app's documents directory, not temp: the OS reclaims temp
+    // space under pressure, which silently deleted captures.
+    final Directory dir = await FrameStore.framesDirectory();
+    final String path =
+        '${dir.path}/geoguard_${timestamp.millisecondsSinceEpoch}.jpg';
+    final File finalFile = await File(path).writeAsBytes(finalBytes);
 
-    await Gal.putImage(finalFile.path, album: 'GeoGuard');
+    // Exporting to the camera roll is a convenience, not the system of record.
+    // A refused or unavailable gallery must not lose a signed capture.
+    String? galleryError;
+    try {
+      await Gal.putImage(finalFile.path, album: 'GeoGuard');
+    } catch (e) {
+      galleryError = e.toString();
+    }
+
+    // Tell the Frames and Locations tabs to reload.
+    FrameStore.notifyChanged();
 
     return CaptureResult(
       bytes: finalBytes,
@@ -131,8 +166,34 @@ class CameraService {
       timestampUtc: timestamp,
       envelope: signedImage.envelope,
       savedPath: finalFile.path,
-      signingKeyId: signedImage.signingKey?.kid,
+      signingKeyId: signedImage.envelope.kid,
+      galleryError: galleryError,
     );
+  }
+
+  /// Stamps, hashes, signs and encodes off the UI isolate.
+  ///
+  /// Deliberately `static`. An `Isolate.run` closure captures its enclosing
+  /// scope, and inside an instance method that scope includes `this` — which
+  /// holds a live `CameraController`. A controller cannot cross an isolate
+  /// boundary, so the send fails with "Illegal argument in isolate message"
+  /// and the capture is lost before anything reaches disk. A static context
+  /// has no `this` to capture, so only [job] can travel.
+  ///
+  /// If the isolate cannot be spawned at all (low memory, a platform that
+  /// refuses), the work runs inline instead. Slower and it blocks the UI, but
+  /// a frozen second beats losing the photo.
+  static Future<SignedImage> _composeOffThread(CaptureJob job) async {
+    try {
+      return await Isolate.run(() => composeSignedFrame(job));
+    } catch (_) {
+      return composeSignedFrame(job);
+    }
+  }
+
+  Position _checkNotMocked(Position p) {
+    if (p.isMocked) throw const MockLocationException();
+    return p;
   }
 
   /// Drives tap-to-focus. Silently ignored on devices without focus-point
