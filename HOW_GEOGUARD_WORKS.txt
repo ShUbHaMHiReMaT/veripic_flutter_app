@@ -1,0 +1,655 @@
+===============================================================================
+                  HOW GEOGUARD WORKS - EXPLAINED SIMPLY
+===============================================================================
+
+This file explains the whole app in easy English. It starts from the moment
+you press the shutter and follows the photo all the way to the person who
+checks it. No part is skipped.
+
+Contents:
+
+   1. What the app is for
+   2. Taking a photo, step by step
+   3. The stamp you can see
+   4. The hidden data inside the photo
+   5. The fingerprints (how we catch edits)
+   6. The keys and the signature
+   7. Where the hidden data is stored (three copies)
+   8. Checking a photo
+   9. Knowing WHO took the photo
+  10. Sending a photo safely
+  11. Login with Google
+  12. Payments
+  13. What the database stores
+  14. Where each part lives in the code
+  15. The big problems we fixed
+
+
+===============================================================================
+1. WHAT THE APP IS FOR
+===============================================================================
+
+Anyone can open a photo in an editor and change the date, move the location,
+or rub out something they do not want people to see. Once that is done, the
+photo looks completely normal. You cannot tell by looking.
+
+GeoGuard fixes this. When you take a photo with GeoGuard, the app does two
+things at once:
+
+   (a) It WRITES the place, the GPS numbers and the time onto the picture,
+       so a human can read it.
+
+   (b) It LOCKS the photo with a digital signature, so a computer can later
+       prove whether even one small thing was changed.
+
+The important word is "prove". Not "guess". If somebody edits the photo, the
+maths stops working, and the app says so.
+
+
+===============================================================================
+2. TAKING A PHOTO, STEP BY STEP
+===============================================================================
+
+When you press the shutter, this happens in order:
+
+  STEP 1 - The app checks the GPS is good.
+           If there is no GPS, the app refuses.
+           If the GPS reading is older than 30 seconds, the app refuses.
+           If another app is FAKING your location (some apps can do this),
+           the app refuses.
+
+           Why refuse instead of just warning? Because a photo that lies
+           about where it was taken is worse than no photo at all. If we
+           signed it, we would be putting our name on a lie.
+
+  STEP 2 - The camera takes the picture.
+
+  STEP 3 - The picture is sent to a "background worker".
+           This is like handing the job to a second person so the screen
+           does not freeze while the work is done.
+
+  STEP 4 - The stamp is painted onto the picture (see part 3).
+
+  STEP 5 - Fingerprints are taken of the picture (see part 5).
+
+  STEP 6 - A small block of information is built, and signed with a secret
+           key that never leaves your phone (see parts 4 and 6).
+
+  STEP 7 - That block is hidden inside the photo file, in three different
+           places (see part 7).
+
+  STEP 8 - The photo is saved on the phone and copied to the gallery.
+
+All of steps 4 to 7 happen in one pass. The picture is opened once and saved
+once. This matters, because opening and saving a big photo is slow, and doing
+it twice used to make the app freeze for several seconds.
+
+
+===============================================================================
+3. THE STAMP YOU CAN SEE
+===============================================================================
+
+The stamp is the strip of writing at the bottom of the photo. It has three
+lines:
+
+      TILAKWADI, BELAGAVI, KARNATAKA, INDIA
+      Lat 15.849700 deg   Long 74.497700 deg
+      23SEP26 14:30 UTC+05:30
+
+This strip takes up the bottom 18% of the picture.
+
+Some details that matter:
+
+  - The writing is NOT a sticker placed on top. It is painted into the
+    actual pixels of the photo. You cannot peel it off.
+
+  - The text size is a PERCENTAGE of the photo height (about 2.2%), not a
+    fixed size. If it were fixed, the writing would look tiny on a big photo
+    and huge on a small one.
+
+  - There is a solid light panel behind the words. We tried just a shadow
+    first, but words with only a shadow become unreadable against a bright
+    sky or a dark room. A solid panel always works.
+
+  - The place name is looked up BEFORE you press the shutter, not after.
+    Looking up a place name needs the internet, and waiting for the internet
+    after pressing the shutter made the app feel broken.
+
+
+===============================================================================
+4. THE HIDDEN DATA INSIDE THE PHOTO
+===============================================================================
+
+Besides the writing you can see, the app hides a small block of text inside
+the photo file. We call it the "envelope". It is written in JSON, which is
+just text with labels.
+
+An envelope looks roughly like this:
+
+   {
+     "lat" : 15.8497,          <- latitude
+     "lon" : 74.4977,          <- longitude
+     "alt" : 751.3,            <- height above sea level, in metres
+     "ts"  : 1774269000000,    <- exact time, in milliseconds
+     "dev" : "a91f...",        <- a code for the phone that took it
+     "ph"  : "3f8a91c2...",    <- fingerprint of the stamp strip
+     "st"  : [16 fingerprints] <- fingerprints of the picture itself
+     "pk"  : "AqW3...",        <- the public key (explained in part 6)
+     "sig" : "8b2c...|91af...",<- the signature
+     "v"   : 6                 <- version number of this format
+   }
+
+About "dev": this is NOT your phone number or your IMEI. Normal apps are not
+allowed to read the IMEI on modern Android, and never on iPhone. Instead we
+take the identifiers the phone does allow, mix in the brand and model, and
+run the result through SHA-256. The output is a 64-character code. It is the
+same for every photo from that phone, but it cannot be turned back into
+anything personal.
+
+
+===============================================================================
+5. THE FINGERPRINTS (HOW WE CATCH EDITS)
+===============================================================================
+
+A fingerprint here is a short code made from a picture. Change the picture,
+and the code changes.
+
+We do NOT use a normal file hash (like the SHA-256 of the whole file). Here
+is why. A normal hash changes completely if even one bit changes. But a photo
+changes slightly just from being saved and re-opened, without anybody editing
+it. A normal hash would call every honest photo a fake.
+
+So we use something called a dHash, which is a "looks-like" fingerprint.
+
+HOW A dHASH IS MADE:
+
+   1. Shrink the picture down to 9 pixels wide and 8 pixels tall.
+   2. For each row, compare every pixel with the one to its right.
+   3. If the left one is brighter, write down 1. Otherwise write down 0.
+   4. You now have 8 rows x 8 comparisons = 64 ones and zeros.
+
+That is the fingerprint. It records whether things get brighter or darker
+going across the image. Saving the photo again barely changes that, but a
+real edit changes it a lot.
+
+TWO SETS OF FINGERPRINTS:
+
+   (a) The stamp strip gets ONE fingerprint of its own.
+       This catches anybody who edits the GPS numbers or the time.
+
+   (b) The picture above the strip is cut into a 4 x 4 grid = 16 squares,
+       and EACH square gets its own fingerprint.
+
+Why 16 separate fingerprints instead of one for the whole picture? Because
+one fingerprint for the whole photo is too blunt. If you erase one person
+from the corner of a large photo, a single whole-photo fingerprint hardly
+moves at all. But the fingerprint of THAT ONE SQUARE moves a lot. Splitting
+the picture is what makes small edits visible.
+
+HOW MUCH CHANGE IS ALLOWED:
+
+We compare two fingerprints by counting how many of the 64 bits are
+different. This count is called the Hamming distance.
+
+   0 to 10 different  -> fine, this is normal saving and re-opening
+   11 or more         -> something was edited
+
+The app shows this to you as "3 OF 64 SPOTS DIFFER - LIMIT 10".
+
+
+===============================================================================
+6. THE KEYS AND THE SIGNATURE
+===============================================================================
+
+This is the heart of the app, so it is worth reading slowly.
+
+WHAT A SIGNATURE IS
+
+A digital signature is a number that can only be produced by someone holding
+a particular secret. Anybody can check the number is correct, but nobody can
+produce it without the secret.
+
+TWO KEYS, NOT ONE
+
+When you first open GeoGuard, it creates a pair of keys using a standard
+called ECDSA P-256:
+
+   PRIVATE KEY  - stays locked inside your phone forever. Never sent
+                  anywhere. Never shown. Used to SIGN.
+
+   PUBLIC KEY   - a short code, 33 bytes long. It is placed INSIDE every
+                  photo you take. Used to CHECK.
+
+The two are mathematically linked. The public key can check a signature. It
+CANNOT create one. So it is safe for it to travel inside the photo where
+anyone can read it.
+
+WHAT GETS SIGNED
+
+The app builds one long line of text containing everything that matters:
+
+   v6|latitude|longitude|altitude|time|phonecode|stampprint|16 prints|publickey
+
+Then it signs that whole line. Two things follow from this:
+
+   - If anybody changes ANY of those values, the line changes, and the
+     signature no longer matches.
+
+   - The public key is inside the signed line. So an attacker cannot swap in
+     their own public key and claim they took your photo. Swapping the key
+     changes the line, which breaks the signature.
+
+THE SIGNATURE ITSELF
+
+It comes out as two numbers, written as "r|s" in hexadecimal. The app uses a
+deterministic method (RFC 6979), which means it does not need a source of
+randomness at the moment of signing. That is what allows signing to happen
+in the background worker.
+
+WHY WE CHANGED THIS (IMPORTANT)
+
+The first version of the app used HMAC-SHA256 instead. HMAC uses ONE shared
+secret for both signing and checking.
+
+That created a serious problem. Only the phone holding the secret could check
+the photo. So if you sent your photo to a friend, their app looked for a key
+that matched, found nothing, and said the photo was FAKE. It was not fake.
+Their app simply had no way to check.
+
+You also cannot fix this by sharing the secret, because anyone holding it
+could forge photos.
+
+Moving to a key PAIR fixed it completely. Now the public key rides along
+inside the photo, so any phone on earth can check any GeoGuard photo, with no
+internet and no account.
+
+
+===============================================================================
+7. WHERE THE HIDDEN DATA IS STORED (THREE COPIES)
+===============================================================================
+
+The envelope is written into the photo file in three different places:
+
+   COPY 1 - EXIF "UserComment"
+            EXIF is the standard area where cameras store settings, date and
+            GPS. Most respectful tools keep it.
+
+   COPY 2 - A JPEG COM segment
+            JPEG files officially allow a "comment" block. We insert a real
+            one right after the file header.
+
+   COPY 3 - At the very end of the file
+            After the JPEG officially ends, we simply add our text. Image
+            viewers ignore anything after the end marker, so the photo still
+            opens normally everywhere.
+
+Each copy starts with a marker so we can find it again:
+   "VPIC_METADATA:" for copies 1 and 2, and "VPIC_PAYLOAD:" for copy 3.
+
+Why three copies? Because different programs destroy different parts. Some
+strip EXIF for privacy. Some rewrite the file and lose the comment. Some cut
+off anything after the end. With three copies in different places, the
+envelope usually survives at least one of them.
+
+When checking, the app looks for the end-of-file copy first, because it is
+the toughest, then falls back to the others.
+
+
+===============================================================================
+8. CHECKING A PHOTO
+===============================================================================
+
+When you pick a photo and ask the app to check it, four checks run in order.
+Each one is shown on screen as it happens.
+
+   CHECK 1 - LOOKING FOR THE HIDDEN DETAILS
+             Search the file for the envelope. If nothing is found, the
+             photo was either not taken with GeoGuard, or its details were
+             stripped out by something along the way. Stop here.
+
+   CHECK 2 - CHECKING THE SIGNATURE
+             Rebuild the signed line from the envelope. Use the public key
+             inside the photo to check the signature. If it does not match,
+             something in the details was changed. Stop here.
+
+   CHECK 3 - CHECKING THE STAMP
+             Take a fresh fingerprint of the stamp strip in the photo we are
+             holding now. Compare it with the one recorded in the envelope.
+             If more than 10 of the 64 bits differ, the GPS text or the time
+             was edited. Stop here.
+
+   CHECK 4 - CHECKING THE PICTURE
+             Take 16 fresh fingerprints, one per square. Compare each with
+             the recorded one. If any square is over the limit, that part of
+             the picture was edited.
+
+If all four pass, the verdict is "Real photo".
+
+Notice the order. We check the signature BEFORE looking at pixels. There is
+no point comparing fingerprints if the recorded fingerprints themselves
+could have been swapped. The signature is what makes the recorded values
+trustworthy in the first place.
+
+Every failure names WHAT went wrong: "Stamp edited", "Photo edited",
+"Details changed", "Not taken with GeoGuard".
+
+
+===============================================================================
+9. KNOWING WHO TOOK THE PHOTO
+===============================================================================
+
+Here is something that is easy to get wrong, so the app keeps two questions
+completely separate:
+
+   QUESTION A: "Has this photo been changed since it was signed?"
+               Pure maths. The answer is the same on every phone in the
+               world. The signature answers this.
+
+   QUESTION B: "Who took it?"
+               The signature does NOT answer this. Anybody can create their
+               own key pair. A valid signature only proves that whoever
+               holds that key signed this photo. It does not say who they
+               are.
+
+So the app shows four levels:
+
+   "Taken on this phone"            - the key is one of mine
+   "Taken by Ravi"                  - I have saved this key under that name
+   "Taken on another GeoGuard phone"- valid, but I have never seen this key
+   "Not real"                       - the signature failed
+
+HOW A KEY GETS A NAME
+
+Each user has a short code made from their public key, shown in groups of
+four like this:
+
+      5DE6 6BAF 27E8 25AA
+
+When a friend sends you a photo and you check it, the app offers "Save this
+sender". You give them a name. From then on, every photo from them says
+"Taken by Ravi". This is called trust on first use, and it is the same idea
+SSH uses when it asks "are you sure you want to connect?".
+
+You can also read the code out loud to your friend over a phone call to make
+sure it matches what their app shows. Two people comparing codes directly is
+the strongest check there is, because nothing in the middle can lie about it.
+
+
+===============================================================================
+10. SENDING A PHOTO SAFELY
+===============================================================================
+
+THE PROBLEM
+
+If you send a GeoGuard photo through WhatsApp as a normal photo, WhatsApp
+squeezes it to make it smaller. Squeezing means rebuilding the file. That
+destroys all three copies of the envelope. The photo arrives looking fine,
+but all the proof is gone.
+
+So there are two ways to send a photo:
+
+WAY 1 - SHARE AS A FILE (free, works with no account)
+
+Use the "Share this photo" button and send it as a FILE or DOCUMENT, not as
+a photo. The file arrives untouched and everything still works. The app says
+this on screen.
+
+WAY 2 - SEND INSIDE THE APP (locked, end to end)
+
+This is the safer way, and it borrows the idea WhatsApp uses for its own
+encryption.
+
+   1. The app makes a fresh random key, 32 bytes long, just for this one
+      photo.
+
+   2. The photo file is locked with that key using AES-256-GCM. GCM is
+      important: it does not only hide the contents, it also detects if even
+      one byte was changed afterwards.
+
+   3. Now the key itself has to reach your friend. The app makes a
+      throwaway key pair, combines it with your friend's public key using
+      ECDH, and passes the result through HKDF. Both sides can work out the
+      same shared value, but nobody watching can.
+
+      (In plain terms: two people can agree on a secret in public, without
+      ever saying the secret out loud.)
+
+   4. The locked photo is uploaded to the server. The server also records
+      the SHA-256 of the locked file.
+
+   5. Your friend's app downloads it, checks the SHA-256 first, works out
+      the same shared value, unlocks the key, unlocks the photo, and saves
+      it.
+
+THE POINT
+
+The server stores a meaningless block of scrambled bytes. It cannot see the
+photo, the place, or the time. And because it cannot READ the photo, it
+cannot RE-SAVE it either. So the bytes that arrive are exactly the bytes
+that were signed, and the signature still works.
+
+The encryption is not only for privacy here. It is what keeps the proof
+alive.
+
+Two smaller details:
+   - The hash is checked BEFORE unlocking. That way a broken download is
+     reported as a broken download, not as a fake photo.
+   - Two copies of the same photo produce completely different scrambled
+     files, so nobody can tell from the server that you sent the same photo
+     twice.
+
+
+===============================================================================
+11. LOGIN WITH GOOGLE
+===============================================================================
+
+Login exists for one reason: so friends can find each other by a username
+instead of reading out long codes.
+
+HOW IT WORKS
+
+   1. You tap "Sign in with Google". Google shows its own screen.
+
+   2. Google gives the app a signed ticket called an ID token.
+
+   3. The app sends that ticket to OUR server.
+
+   4. Our server downloads Google's public keys and checks the ticket really
+      came from Google, and that it was made for OUR app and not some other
+      app.
+
+   5. Only then does the server create your account and give the app a
+      session pass.
+
+THE RULE THAT MATTERS
+
+The app never tells the server who you are. It shows a ticket signed by
+Google, and the server checks that signature itself. If the server simply
+believed what the app said, anybody could edit the app and log in as anyone.
+
+WHY THE DATABASE IS NOT INSIDE THE APP
+
+An Android APK file is just a zip. Anyone can unzip it and read every piece
+of text inside it in about one minute. If the database password were in the
+app, it would be public, and anyone could read or delete everything.
+
+So the app never touches the database. It talks to our server over HTTPS,
+and only the server holds the password.
+
+     App  ---HTTPS--->  Our server  --->  MongoDB
+                        (holds password)
+
+
+===============================================================================
+12. PAYMENTS
+===============================================================================
+
+Three things cost money, each Rs 1 for testing:
+
+   - Checking whether a photo is real
+   - Sending a photo to another user
+   - Exporting the PDF evidence report
+
+Taking photos and sharing as a file stay free.
+
+HOW A PAYMENT IS PROVED
+
+   1. The app asks our server to start an order.
+   2. The server tells Razorpay the amount. THE APP NEVER SENDS THE AMOUNT.
+      The price list lives on the server, so a modified app cannot buy a
+      Rs 1 item for 1 paisa.
+   3. The payment screen opens. You pay.
+   4. Razorpay gives back a payment id and a signature.
+   5. The app passes these to our server.
+   6. The server recreates the signature itself using the secret key that
+      only it holds. If they match, the feature unlocks. If not, nothing
+      happens.
+
+Step 6 is the whole point. The app never decides that it paid. If it did,
+somebody would edit the app to always say "paid" within a week.
+
+Two more safeguards:
+   - The comparison is done in constant time. A normal comparison finishes
+     early on the first wrong character, and the tiny timing difference can
+     be measured and used to guess the signature one character at a time.
+   - There is a webhook. If you pay and then close the app before it comes
+     back, Razorpay tells our server directly, and the feature still unlocks.
+
+
+===============================================================================
+13. WHAT THE DATABASE STORES
+===============================================================================
+
+MongoDB holds five things. Note that PHOTOS ARE NEVER STORED AS PICTURES in
+the database, only as locked scrambled blocks, and only until collected.
+
+   users
+      Google account id, email, name, username, public key, sharing code,
+      what they have paid for, when they were last seen, and counters
+      (how many logins, photos sent, photos received, checks run).
+
+   shares
+      Who sent to whom, where the locked block is, its hash, and the wrapped
+      key. Deleted as soon as the receiver opens it.
+
+   shareBlobs
+      The locked scrambled photo files themselves.
+
+   payments
+      Every order: which plan, how much, whether it was paid, and whether a
+      signature was ever rejected.
+
+   events
+      A diary of everything that happens: signed up, signed in, username
+      taken, key published, order started, payment accepted, payment
+      rejected, photo sent, photo opened, photo checked.
+
+WHY THE DIARY EXISTS
+
+Without it, the database only tells you what is true RIGHT NOW. The first
+time a user says "I paid and got nothing", a right-now-only database cannot
+answer them. The diary can.
+
+WHAT IS DELIBERATELY NOT STORED
+
+When the app reports that a check happened, it sends the VERDICT ONLY. Not
+the photo, not the coordinates, not the signature. The server cannot read a
+locked photo, so it should not be able to learn those things from the diary
+either. There is an automatic test that proves the app cannot sneak extra
+fields in.
+
+The diary also deletes itself after 90 days, which is long enough to settle
+a payment argument and short enough to keep the free 512 MB database from
+filling up.
+
+
+===============================================================================
+14. WHERE EACH PART LIVES IN THE CODE
+===============================================================================
+
+THE APP (folder: flutter_app/lib)
+
+  services/camera_service.dart    Taking the photo, running the background
+                                  worker, saving the file.
+  services/overlay_service.dart   Painting the stamp onto the pixels.
+  services/security_service.dart  The envelope, the fingerprints, hiding the
+                                  data in the file, and checking it.
+  services/identity_service.dart  The key pairs, signing, saved contacts.
+  services/sealed_transfer.dart   Locking and unlocking a photo for sending.
+  services/verification_service.dart  The four checks, in order.
+  services/account_service.dart   Google login, the username directory,
+                                  sending and receiving.
+  services/payment_service.dart   The payment screen.
+  services/frame_store.dart       Keeping track of saved photos.
+  services/certificate_service.dart  The PDF report.
+
+  screens/camera_screen.dart      The camera screen.
+  screens/verify_screen.dart      The checking screen.
+  screens/senders_screen.dart     Your code and your saved senders.
+  screens/inbox_screen.dart       Photos people sent you.
+  screens/paywall.dart            One place that decides if you have paid.
+
+THE SERVER (folder: server/src)
+
+  index.js     Starts everything up.
+  app.js       All the web addresses (routes).
+  auth.js      Checking the Google ticket, making session passes.
+  db.js        Connecting to MongoDB. The ONLY file that reads the password.
+  keys.js      Checking a public key really is a valid key.
+  shares.js    Storing and handing out locked photos.
+  payments.js  Razorpay orders and signature checking.
+  events.js    The diary.
+
+
+===============================================================================
+15. THE BIG PROBLEMS WE FIXED
+===============================================================================
+
+  PROBLEM: A photo sent to a friend was always reported as fake.
+  CAUSE:   HMAC uses one shared secret, so only the phone that made the
+           photo could check it.
+  FIX:     Switched to a key pair. The public half now travels inside the
+           photo, so any phone can check any photo.
+
+  PROBLEM: Pressing the shutter took several seconds and froze the screen.
+  CAUSE:   After pressing, the app asked for a brand new GPS reading, then
+           looked up the place name over the internet, then opened and saved
+           the full-size photo TWICE, all on the screen's own thread.
+  FIX:     Reuse the GPS reading and place name already on screen, and do
+           one open and one save inside a background worker.
+
+  PROBLEM: A new photo did not appear until the app was closed and reopened.
+  CAUSE:   The photo list was read once when the app started and never
+           again. Also, photos were being saved to the temporary folder,
+           which Android empties whenever it needs space.
+  FIX:     The list now reloads when a photo is taken, when you switch tabs,
+           and when you return to the app. Photos moved to permanent
+           storage.
+
+  PROBLEM: Capture sometimes failed with a strange error.
+  CAUSE:   The background worker was accidentally trying to carry the whole
+           camera object with it, which is not allowed.
+  FIX:     Only plain data is handed to the worker now, and if the worker
+           cannot start at all, the job runs normally instead of failing.
+
+  PROBLEM: The words in the app were too technical. Things like "Extracting
+           EXIF / COM payload" and "HAMMING 3 / 64".
+  FIX:     Rewritten in plain words: "Looking for the hidden details",
+           "3 OF 64 SPOTS DIFFER - LIMIT 10".
+
+
+===============================================================================
+IN ONE PARAGRAPH
+===============================================================================
+
+GeoGuard writes the place and time onto a photo where you can see it, takes
+64-bit "looks-like" fingerprints of the stamp and of sixteen separate parts
+of the picture, and signs all of it with a private key that never leaves the
+phone. The matching public key is hidden inside the photo in three different
+places, so any other phone can check the signature offline and find out
+whether anything was changed. Photos can be sent locked so that not even our
+own server can read them, which also means nothing can re-save them and
+destroy the proof. Google login and usernames make friends easy to find, and
+payments are always confirmed by the server, never by the app.
+
+===============================================================================
