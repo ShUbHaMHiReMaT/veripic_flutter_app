@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../config.dart';
 import 'identity_service.dart';
+import 'sealed_transfer.dart';
 
 /// Raised for anything the user should read, so callers never have to show a
 /// raw exception string.
@@ -25,6 +26,7 @@ class DirectoryUser {
     required this.sharingCode,
     required this.fingerprint,
     this.displayName,
+    this.encryptionKey,
   });
 
   final String username;
@@ -34,6 +36,12 @@ class DirectoryUser {
   final String sharingCode;
   final String fingerprint;
 
+  /// Their key-agreement public key. Null when they have not published one,
+  /// in which case a photo cannot be sealed to them.
+  final String? encryptionKey;
+
+  bool get canReceive => encryptionKey != null && encryptionKey!.isNotEmpty;
+
   String get label => displayName?.isNotEmpty == true ? displayName! : username;
 
   static DirectoryUser fromJson(Map<String, dynamic> json) => DirectoryUser(
@@ -41,6 +49,38 @@ class DirectoryUser {
         displayName: json['displayName'] as String?,
         sharingCode: json['sharingCode'] as String? ?? '',
         fingerprint: json['fingerprint'] as String? ?? '',
+        encryptionKey: json['encryptionKey'] as String?,
+      );
+}
+
+/// A photo somebody sent, still sealed.
+class InboxItem {
+  const InboxItem({
+    required this.id,
+    required this.fromUsername,
+    required this.wrappedKey,
+    required this.ephemeralPublicKey,
+    required this.sha256,
+    required this.bytes,
+    this.sentAt,
+  });
+
+  final String id;
+  final String fromUsername;
+  final String wrappedKey;
+  final String ephemeralPublicKey;
+  final String sha256;
+  final int bytes;
+  final DateTime? sentAt;
+
+  static InboxItem fromJson(Map<String, dynamic> json) => InboxItem(
+        id: json['id'] as String? ?? '',
+        fromUsername: json['fromUsername'] as String? ?? '',
+        wrappedKey: json['wrappedKey'] as String? ?? '',
+        ephemeralPublicKey: json['ephemeralPublicKey'] as String? ?? '',
+        sha256: json['sha256'] as String? ?? '',
+        bytes: (json['bytes'] as num?)?.toInt() ?? 0,
+        sentAt: DateTime.tryParse(json['sentAt'] as String? ?? ''),
       );
 }
 
@@ -250,7 +290,10 @@ class AccountService {
     final PortableIdentity id = await _identity.identity();
     final Map<String, dynamic> body = await _put(
       '/me/keys',
-      <String, dynamic>{'sharingCode': id.publicKeyB64},
+      <String, dynamic>{
+        'sharingCode': id.publicKeyB64,
+        'encryptionKey': id.encryptionPublicKeyB64,
+      },
     );
     final Account account = Account.fromJson(
       (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
@@ -310,6 +353,63 @@ class AccountService {
     return null;
   }
 
+  /// Records that a check ran, so the account has a history.
+  ///
+  /// Sends the verdict and nothing else. Silently does nothing when signed
+  /// out or offline — a verification must never depend on a network call.
+  Future<void> reportCheck(String verdict) async {
+    if (!AppConfig.hasApi) return;
+    if (await _sessionToken() == null) return;
+    try {
+      await _post('/events/checked', <String, dynamic>{'verdict': verdict});
+    } catch (_) {
+      // Best effort by design.
+    }
+  }
+
+  // =====================================================================
+  // Payments
+  // =====================================================================
+
+  /// Plans this account has paid for.
+  Future<List<String>> entitlements() async {
+    final Map<String, dynamic> body = await _get('/payments/entitlements');
+    return <String>[
+      for (final Object? e
+          in (body['entitlements'] as List<dynamic>? ?? const <dynamic>[]))
+        if (e is String) e,
+    ];
+  }
+
+  /// Asks the server to open a Razorpay order.
+  ///
+  /// The amount is set server-side from a fixed price list, so a patched app
+  /// cannot buy a plan for one rupee.
+  Future<Map<String, dynamic>> createOrder(String plan) =>
+      _post('/payments/order', <String, dynamic>{'plan': plan});
+
+  /// Hands Razorpay's response to the server for verification.
+  ///
+  /// Nothing is unlocked until this returns: the signature can only be
+  /// reproduced with the key secret, which lives on the server.
+  Future<List<String>> verifyPayment({
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async {
+    final Map<String, dynamic> body =
+        await _post('/payments/verify', <String, dynamic>{
+      'orderId': orderId,
+      'paymentId': paymentId,
+      'signature': signature,
+    });
+    return <String>[
+      for (final Object? e
+          in (body['entitlements'] as List<dynamic>? ?? const <dynamic>[]))
+        if (e is String) e,
+    ];
+  }
+
   // =====================================================================
   // HTTP
   // =====================================================================
@@ -322,6 +422,90 @@ class AccountService {
       'content-type': 'application/json',
       if (token != null) 'authorization': 'Bearer $token',
     };
+  }
+
+  // =====================================================================
+  // Encrypted photo delivery
+  // =====================================================================
+
+  /// Seals [fileBytes] to [recipient] and uploads the ciphertext.
+  ///
+  /// The bytes handed in must be the original signed file, uncompressed. That
+  /// is the whole point: the server cannot read them, so nothing in the path
+  /// can re-encode them, so the signature inside still verifies on arrival.
+  Future<void> sendPhoto({
+    required DirectoryUser recipient,
+    required Uint8List fileBytes,
+  }) async {
+    final String? theirKey = recipient.encryptionKey;
+    if (theirKey == null || theirKey.isEmpty) {
+      throw AccountException(
+        '@${recipient.username} cannot receive photos yet. They need to open '
+        'the app once and sign in.',
+      );
+    }
+
+    final SealedPhoto sealed = await compute(
+      _sealInBackground,
+      (bytes: fileBytes, key: theirKey),
+    );
+
+    await _post('/shares', <String, dynamic>{
+      'toUsername': recipient.username,
+      'ciphertextB64': base64Encode(sealed.ciphertext),
+      ...sealed.toMetadata(),
+    });
+  }
+
+  Future<List<InboxItem>> inbox() async {
+    final Map<String, dynamic> body = await _get('/shares/inbox');
+    return <InboxItem>[
+      for (final Object? row
+          in (body['shares'] as List<dynamic>? ?? const <dynamic>[]))
+        if (row is Map<String, dynamic>) InboxItem.fromJson(row),
+    ];
+  }
+
+  /// Downloads and opens one sealed photo, returning the original file.
+  Future<Uint8List> receivePhoto(InboxItem item) async {
+    if (!AppConfig.hasApi) throw AccountException(AppConfig.setupHint);
+
+    final String? token = await _sessionToken();
+    final http.Response res;
+    try {
+      res = await _http.get(
+        _uri('/shares/${item.id}/blob'),
+        headers: <String, String>{
+          if (token != null) 'authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(minutes: 2));
+    } catch (_) {
+      throw const AccountException('Could not download that photo.');
+    }
+
+    if (res.statusCode != 200) {
+      throw const AccountException('That photo is no longer available.');
+    }
+
+    final PortableIdentity me = await _identity.identity();
+    return compute(
+      _openInBackground,
+      (
+        ciphertext: res.bodyBytes,
+        wrappedKey: item.wrappedKey,
+        ephemeral: item.ephemeralPublicKey,
+        sha256: item.sha256,
+        privateKey: me.encryptionPrivateKeyBytes,
+      ),
+    );
+  }
+
+  /// Drops a share once it has been saved locally, freeing server storage.
+  Future<void> deleteShare(InboxItem item) async {
+    await _send(() async => _http.delete(
+          _uri('/shares/${item.id}'),
+          headers: await _headers(),
+        ));
   }
 
   Future<Map<String, dynamic>> _get(String path) async =>
@@ -375,3 +559,31 @@ class AccountService {
     );
   }
 }
+
+
+// AES-GCM over a multi-megabyte photo is heavy enough to drop frames, so both
+// directions run off the UI isolate. Top-level functions, because `compute`
+// cannot send a closure that captures `this`.
+
+SealedPhoto _sealInBackground(({Uint8List bytes, String key}) job) =>
+    SealedTransfer.seal(
+      fileBytes: job.bytes,
+      recipientEncryptionKeyB64: job.key,
+    );
+
+Uint8List _openInBackground(
+  ({
+    Uint8List ciphertext,
+    String wrappedKey,
+    String ephemeral,
+    String sha256,
+    Uint8List privateKey,
+  }) job,
+) =>
+    SealedTransfer.open(
+      ciphertext: job.ciphertext,
+      wrappedKeyB64: job.wrappedKey,
+      ephemeralPublicKeyB64: job.ephemeral,
+      expectedSha256: job.sha256,
+      myEncryptionPrivateKey: job.privateKey,
+    );

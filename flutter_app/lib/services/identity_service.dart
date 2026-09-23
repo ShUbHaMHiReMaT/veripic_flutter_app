@@ -8,6 +8,8 @@ import 'package:pointycastle/api.dart';
 import 'package:pointycastle/digests/sha256.dart';
 import 'package:pointycastle/ecc/api.dart';
 import 'package:pointycastle/ecc/curves/secp256r1.dart';
+import 'package:pointycastle/key_derivators/api.dart';
+import 'package:pointycastle/key_derivators/hkdf.dart';
 import 'package:pointycastle/key_generators/api.dart';
 import 'package:pointycastle/key_generators/ec_key_generator.dart';
 import 'package:pointycastle/macs/hmac.dart';
@@ -93,10 +95,24 @@ class PortableIdentity {
   const PortableIdentity({
     required this.privateKeyBytes,
     required this.publicKeyBytes,
+    required this.encryptionPrivateKeyBytes,
+    required this.encryptionPublicKeyBytes,
   });
 
   final Uint8List privateKeyBytes;
   final Uint8List publicKeyBytes;
+
+  /// A second P-256 keypair, used only for key agreement when receiving a
+  /// sealed photo.
+  ///
+  /// Separate from the signing pair on purpose. Using one key for both
+  /// signing and key agreement mixes two different security arguments, and a
+  /// weakness in either protocol then undermines both.
+  final Uint8List encryptionPrivateKeyBytes;
+  final Uint8List encryptionPublicKeyBytes;
+
+  String get encryptionPublicKeyB64 =>
+      base64Encode(encryptionPublicKeyBytes);
 
   String get publicKeyB64 => base64Encode(publicKeyBytes);
 
@@ -113,13 +129,32 @@ class PortableIdentity {
   Map<String, dynamic> toJson() => <String, dynamic>{
         'd': base64Encode(privateKeyBytes),
         'q': base64Encode(publicKeyBytes),
+        'ed': base64Encode(encryptionPrivateKeyBytes),
+        'eq': base64Encode(encryptionPublicKeyBytes),
       };
 
-  static PortableIdentity fromJson(Map<String, dynamic> json) =>
-      PortableIdentity(
+  /// Tolerates an identity stored before encryption keys existed by minting
+  /// the missing pair, so an existing install keeps its signing key — and
+  /// therefore keeps verifying every photo it has already taken.
+  static PortableIdentity fromJson(Map<String, dynamic> json) {
+    final String? ed = json['ed'] as String?;
+    final String? eq = json['eq'] as String?;
+    if (ed == null || eq == null) {
+      final PortableIdentity fresh = IdentityService.generate();
+      return PortableIdentity(
         privateKeyBytes: base64Decode(json['d'] as String),
         publicKeyBytes: base64Decode(json['q'] as String),
+        encryptionPrivateKeyBytes: fresh.encryptionPrivateKeyBytes,
+        encryptionPublicKeyBytes: fresh.encryptionPublicKeyBytes,
       );
+    }
+    return PortableIdentity(
+      privateKeyBytes: base64Decode(json['d'] as String),
+      publicKeyBytes: base64Decode(json['q'] as String),
+      encryptionPrivateKeyBytes: base64Decode(ed),
+      encryptionPublicKeyBytes: base64Decode(eq),
+    );
+  }
 }
 
 /// Portable, offline-verifiable signatures over NIST P-256 (secp256r1).
@@ -188,30 +223,88 @@ class IdentityService {
     return fresh;
   }
 
-  /// Generates a fresh P-256 keypair.
-  static PortableIdentity generate() {
+  /// Seeds a CSPRNG from the platform's secure random source.
+  static FortunaRandom _random() {
     final FortunaRandom rng = FortunaRandom();
     final Random seed = Random.secure();
     rng.seed(KeyParameter(
-      Uint8List.fromList(
-        List<int>.generate(32, (_) => seed.nextInt(256)),
-      ),
+      Uint8List.fromList(List<int>.generate(32, (_) => seed.nextInt(256))),
     ));
+    return rng;
+  }
 
+  static AsymmetricKeyPair<PublicKey, PrivateKey> _generatePair(
+    FortunaRandom rng,
+  ) {
     final ECKeyGenerator generator = ECKeyGenerator()
       ..init(ParametersWithRandom(ECKeyGeneratorParameters(_curve), rng));
+    return generator.generateKeyPair();
+  }
 
-    final AsymmetricKeyPair<PublicKey, PrivateKey> pair =
-        generator.generateKeyPair();
-    final ECPrivateKey priv = pair.privateKey as ECPrivateKey;
-    final ECPublicKey pub = pair.publicKey as ECPublicKey;
+  /// Generates a fresh signing pair and a fresh encryption pair.
+  static PortableIdentity generate() {
+    final FortunaRandom rng = _random();
+
+    final AsymmetricKeyPair<PublicKey, PrivateKey> signing = _generatePair(rng);
+    final AsymmetricKeyPair<PublicKey, PrivateKey> encryption =
+        _generatePair(rng);
 
     return PortableIdentity(
-      privateKeyBytes: _bigIntToBytes(priv.d!, 32),
+      privateKeyBytes: _bigIntToBytes((signing.privateKey as ECPrivateKey).d!, 32),
       // Compressed point: 33 bytes instead of 65, which matters because the
       // whole envelope has to fit in one JPEG COM segment.
-      publicKeyBytes: pub.Q!.getEncoded(true),
+      publicKeyBytes: (signing.publicKey as ECPublicKey).Q!.getEncoded(true),
+      encryptionPrivateKeyBytes:
+          _bigIntToBytes((encryption.privateKey as ECPrivateKey).d!, 32),
+      encryptionPublicKeyBytes:
+          (encryption.publicKey as ECPublicKey).Q!.getEncoded(true),
     );
+  }
+
+  /// One ephemeral keypair for a single sealed photo.
+  static ({Uint8List privateKey, Uint8List publicKey}) ephemeralPair() {
+    final AsymmetricKeyPair<PublicKey, PrivateKey> pair =
+        _generatePair(_random());
+    return (
+      privateKey: _bigIntToBytes((pair.privateKey as ECPrivateKey).d!, 32),
+      publicKey: (pair.publicKey as ECPublicKey).Q!.getEncoded(true),
+    );
+  }
+
+  /// Random bytes from the platform CSPRNG.
+  static Uint8List randomBytes(int length) =>
+      _random().nextBytes(length);
+
+  /// ECDH followed by HKDF-SHA256, yielding a 32-byte symmetric key.
+  ///
+  /// The raw ECDH output is a curve x-coordinate, not a uniformly random key,
+  /// so it must never be used as one directly — HKDF is what turns it into
+  /// key material. [info] separates this use from any other, so the same
+  /// agreement can never produce the same key in two different contexts.
+  static Uint8List agreeKey({
+    required Uint8List privateKeyBytes,
+    required String peerPublicKeyB64,
+    required String info,
+  }) {
+    final ECPoint? peer = _curve.curve.decodePoint(base64Decode(peerPublicKeyB64));
+    if (peer == null) {
+      throw ArgumentError('Peer public key is not a point on P-256');
+    }
+
+    final ECDHBasicAgreement agreement = ECDHBasicAgreement()
+      ..init(ECPrivateKey(_bytesToBigInt(privateKeyBytes), _curve));
+    final BigInt shared =
+        agreement.calculateAgreement(ECPublicKey(peer, _curve));
+
+    final HKDFKeyDerivator hkdf = HKDFKeyDerivator(SHA256Digest())
+      ..init(HkdfParameters(
+        _bigIntToBytes(shared, 32),
+        32,
+        null,
+        Uint8List.fromList(utf8.encode(info)),
+      ));
+
+    return hkdf.process(Uint8List(0));
   }
 
   /// Stable short name for a public key, used as the envelope's `kid` and as

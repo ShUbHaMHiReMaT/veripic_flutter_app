@@ -29,6 +29,7 @@
         "permission_handler",
         "pointycastle",
         "printing",
+        "razorpay_flutter",
         "share_plus"
       ],
       "devDependencies": [
@@ -59,6 +60,14 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "razorpay_flutter",
+      "version": "1.4.7",
+      "dependencies": [
+        "eventify",
+        "flutter"
       ]
     },
     {
@@ -410,6 +419,11 @@
         "string_scanner",
         "term_glyph"
       ]
+    },
+    {
+      "name": "eventify",
+      "version": "1.0.1",
+      "dependencies": []
     },
     {
       "name": "google_sign_in_web",

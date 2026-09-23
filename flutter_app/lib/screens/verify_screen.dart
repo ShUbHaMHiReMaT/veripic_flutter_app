@@ -8,11 +8,14 @@ import 'package:intl/intl.dart';
 
 import 'package:printing/printing.dart';
 
+import '../services/account_service.dart';
 import '../services/certificate_service.dart';
 import '../services/identity_service.dart';
+import '../services/payment_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
 import '../theme/veripic_theme.dart';
+import 'paywall.dart';
 import 'senders_screen.dart';
 
 class VerifyScreen extends StatefulWidget {
@@ -102,6 +105,11 @@ class _VerifyScreenState extends State<VerifyScreen> {
         _report = report;
         _busy = false;
       });
+
+      // Tell the account a check happened. Verdict only — the photo and its
+      // coordinates never leave the phone. Fire and forget: an analytics
+      // write must not be able to break a verification.
+      unawaited(AccountService().reportCheck(report.verdict.name));
     } catch (e) {
       if (!mounted) return;
       HapticFeedback.vibrate();
@@ -120,6 +128,11 @@ class _VerifyScreenState extends State<VerifyScreen> {
     if (report == null || bytes == null || _exporting) return;
 
     HapticFeedback.mediumImpact();
+
+    // Its own unlock: the certificate is a separate deliverable from the
+    // check that produced it.
+    if (!await Paywall.require(context, Plans.certificate)) return;
+    if (!mounted) return;
     final CertificateParticulars? particulars =
         await showDialog<CertificateParticulars>(
       context: context,
@@ -171,6 +184,11 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
   Future<void> _chooseSource() async {
     HapticFeedback.selectionClick();
+
+    // The check itself is the paid feature.
+    if (!await Paywall.require(context, Plans.verify)) return;
+    if (!mounted) return;
+
     final Palette p = Palette.of(context);
 
     final ImageSource? source = await showModalBottomSheet<ImageSource>(

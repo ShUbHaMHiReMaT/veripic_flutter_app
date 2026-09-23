@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../config.dart';
+import '../services/account_service.dart';
 import '../services/device_service.dart';
 import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
 import 'camera_screen.dart';
+import 'inbox_screen.dart';
 import 'senders_screen.dart';
 import 'verify_screen.dart';
 
@@ -38,6 +41,8 @@ class HomeScreen extends StatelessWidget {
           onPressed: () => _open(context, const CameraScreen()),
         ),
         const SizedBox(height: Tokens.spaceSection),
+        const _AccountBanner(),
+        const SizedBox(height: Tokens.spaceSection),
         const SectionHead(title: 'Tools'),
         const SizedBox(height: Tokens.spaceSnug),
         IntrinsicHeight(
@@ -66,6 +71,24 @@ class HomeScreen extends StatelessWidget {
             ],
           ),
         ),
+        // Only reachable with an account: a locked photo has to be addressed
+        // to somebody, so there is nothing to show when signed out.
+        if (AppConfig.accountsEnabled) ...<Widget>[
+          const SizedBox(height: Tokens.spaceSnug),
+          ValueListenableBuilder<Account?>(
+            valueListenable: AccountService.current,
+            builder: (BuildContext context, Account? account, _) {
+              if (account == null) return const SizedBox.shrink();
+              return TabCard(
+                icon: Icons.inbox_outlined,
+                tint: Tokens.tintCool,
+                title: 'Sent to you',
+                meta: const <String>['locked photos'],
+                onTap: () => _open(context, const InboxScreen()),
+              );
+            },
+          ),
+        ],
         const SizedBox(height: Tokens.spaceBase),
         const SectionHead(title: 'This phone'),
         const SizedBox(height: Tokens.spaceSnug),
@@ -214,4 +237,109 @@ class _Identity {
   /// The keypair that actually signs photos now, and whose public half every
   /// capture carries so other phones can check it.
   final PortableIdentity portable;
+}
+
+
+/// Sign-in state, on the first screen rather than buried two taps deep.
+///
+/// It also has to explain *why* there is no sign-in button when accounts were
+/// not configured at build time. Silently hiding the feature is what made it
+/// look like sign-in had never been built.
+class _AccountBanner extends StatefulWidget {
+  const _AccountBanner();
+
+  @override
+  State<_AccountBanner> createState() => _AccountBannerState();
+}
+
+class _AccountBannerState extends State<_AccountBanner> {
+  final AccountService _account = AccountService();
+
+  @override
+  void initState() {
+    super.initState();
+    // Best effort: a failure here just leaves the signed-out state showing.
+    if (AppConfig.accountsEnabled) {
+      _account.restore().catchError((_) => null);
+    }
+  }
+
+  void _openSenders() {
+    HapticFeedback.mediumImpact();
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const SendersScreen()))
+        .then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    if (!AppConfig.accountsEnabled) {
+      return AccentPanel(
+        accent: Tokens.statusWarn,
+        background: p.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Google sign-in is off in this build', style: p.cardTitle),
+            const SizedBox(height: Tokens.spaceTight),
+            Text(
+              'The app was built without a Google client id, so there is '
+              'nothing to sign in to yet. Everything else works: take photos, '
+              'check them, and share your code by hand.',
+              style: p.body,
+            ),
+            const SizedBox(height: Tokens.spaceTight),
+            Text(AppConfig.setupHint, style: p.dataSmall),
+          ],
+        ),
+      );
+    }
+
+    return ValueListenableBuilder<Account?>(
+      valueListenable: AccountService.current,
+      builder: (BuildContext context, Account? account, _) {
+        final bool signedIn = account != null;
+        return PressCard(
+          onTap: _openSenders,
+          child: Row(
+            children: <Widget>[
+              IconTile(
+                icon: signedIn ? Icons.person : Icons.login,
+                color: signedIn ? Tokens.statusOk : Tokens.accent,
+              ),
+              const SizedBox(width: Tokens.spaceSnug),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      signedIn
+                          ? (account.username != null
+                              ? '@${account.username}'
+                              : 'Pick a username')
+                          : 'Sign in with Google',
+                      style: p.cardTitle,
+                    ),
+                    const SizedBox(height: Tokens.spaceHair),
+                    Text(
+                      signedIn
+                          ? 'Friends can find you by name'
+                          : 'So friends can find you by name',
+                      style: p.dataSmall,
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: p.textSecondary),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
