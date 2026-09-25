@@ -11,7 +11,6 @@ import 'package:printing/printing.dart';
 import '../services/account_service.dart';
 import '../services/certificate_service.dart';
 import '../services/identity_service.dart';
-import '../services/payment_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
 import '../theme/veripic_theme.dart';
@@ -129,9 +128,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
     HapticFeedback.mediumImpact();
 
-    // Its own unlock: the certificate is a separate deliverable from the
-    // check that produced it.
-    if (!await Paywall.require(context, Plans.certificate)) return;
+    // Pro covers the PDF as well as the check. Asked again here because a
+    // Pro month can run out while this screen is open.
+    if (!await Paywall.requirePro(context)) return;
     if (!mounted) return;
     final CertificateParticulars? particulars =
         await showDialog<CertificateParticulars>(
@@ -185,8 +184,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
   Future<void> _chooseSource() async {
     HapticFeedback.selectionClick();
 
-    // The check itself is the paid feature.
-    if (!await Paywall.require(context, Plans.verify)) return;
+    // Checking a photo is a Pro feature.
+    if (!await Paywall.requirePro(context)) return;
     if (!mounted) return;
 
     final Palette p = Palette.of(context);

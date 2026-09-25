@@ -1,80 +1,61 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../config.dart';
 import '../services/account_service.dart';
 import '../services/payment_service.dart';
 import '../theme/veripic_theme.dart';
 
-/// One place that decides whether a paid feature may run.
+/// One place that decides whether a Pro feature may run.
 ///
 /// Every gate goes through here so the rule is stated once: the server is the
-/// only thing that grants an entitlement, and a build with no server grants
-/// everything rather than locking the user out of an app they cannot pay in.
+/// only thing that grants Pro, and a build with no server grants everything
+/// rather than locking the user out of an app they cannot pay in.
 class Paywall {
   const Paywall._();
 
-  static const Map<String, ({String title, String blurb, int rupees})> _copy =
-      <String, ({String title, String blurb, int rupees})>{
-    Plans.verify: (
-      title: 'Checking photos',
-      blurb: 'Check whether any photo is real — its signature, its stamp and '
-          'the picture itself.',
-      rupees: 1,
-    ),
-    Plans.certificate: (
-      title: 'Evidence certificate',
-      blurb: 'Export a check as a signed PDF report, laid out to follow '
-          'section 63(4) of the Bharatiya Sakshya Adhiniyam, 2023.',
-      rupees: 1,
-    ),
-    Plans.sharing: (
-      title: 'Sending photos',
-      blurb: 'Send a photo straight to another GeoGuard user, locked so only '
-          'they can open it and the proof inside survives the trip.',
-      rupees: 1,
-    ),
-  };
-
-  /// Returns true when [plan] may be used now.
+  /// Returns true when Pro features may be used now.
   ///
-  /// Shows the payment sheet if it is not already paid for. Returns false when
+  /// Shows the payment sheet if the account is not Pro. Returns false when
   /// the user backs out or the payment does not complete.
-  static Future<bool> require(BuildContext context, String plan) async {
+  static Future<bool> requirePro(BuildContext context) async {
     // No account system in this build means no way to take a payment, and no
     // way to check one. Charging here would only break the app.
     if (!AppConfig.accountsEnabled) return true;
-    if (PaymentService.has(plan)) return true;
+    if (PaymentService.isPro) return true;
 
-    final PaymentService payments = PaymentService();
-
-    // Ask the server before asking for money — the user may already own it on
-    // another install, or have paid and closed the app mid-redirect.
-    await payments.refresh();
-    if (PaymentService.has(plan)) return true;
+    // Ask the server before asking for money — the user may have paid on
+    // another phone, or paid and closed the app mid-redirect.
+    if (await PaymentService().refresh()) return true;
     if (!context.mounted) return false;
 
+    return buyPro(context);
+  }
+
+  /// Offers Pro, or another period on top of the current one, and runs the
+  /// payment if the user accepts. Returns true when the account is Pro after.
+  static Future<bool> buyPro(BuildContext context) async {
     if (AccountService.current.value == null) {
       await _tell(
         context,
         'Sign in first',
-        'This is a paid feature, so it needs an account. Sign in from the '
-            'home screen, then try again.',
+        'Pro belongs to an account. Sign in, then try again.',
       );
       return false;
     }
 
-    final bool? go = await _offer(context, plan);
+    final bool? go = await _offer(context);
     if (go != true || !context.mounted) return false;
 
     try {
-      final bool ok = await payments.purchase(plan);
+      final bool ok = await PaymentService().purchasePro();
       if (!ok && context.mounted) {
         await _tell(
           context,
-          'Not unlocked',
-          'The payment did not complete, so nothing was unlocked. You have '
-              'not been charged for an incomplete payment.',
+          'Pro not started',
+          'The payment did not complete, so nothing was unlocked and you '
+              'have not been charged.',
         );
       }
       return ok;
@@ -90,9 +71,9 @@ class Paywall {
     }
   }
 
-  static Future<bool?> _offer(BuildContext context, String plan) {
-    final ({String title, String blurb, int rupees}) copy =
-        _copy[plan] ?? (title: 'Unlock', blurb: '', rupees: 1);
+  static Future<bool?> _offer(BuildContext context) {
+    final DateTime? until = AccountService.current.value?.proUntil;
+    final bool renewing = PaymentService.isPro && until != null;
 
     return showDialog<bool>(
       context: context,
@@ -108,17 +89,30 @@ class Paywall {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                SectionHead(title: copy.title),
-                const SizedBox(height: Tokens.spaceSnug),
-                Text(copy.blurb, style: p.body),
+                const Row(
+                  children: <Widget>[
+                    Expanded(child: SectionHead(title: 'GeoGuard Pro')),
+                    StatusBadge(label: 'pro', color: Tokens.accent),
+                  ],
+                ),
                 const SizedBox(height: Tokens.spaceSnug),
                 Text(
-                  'One payment, and it stays unlocked on this account.',
+                  'Check whether any photo is real — its signature, its '
+                  'stamp and the picture itself — and download the PDF report '
+                  'of every check.',
+                  style: p.body,
+                ),
+                const SizedBox(height: Tokens.spaceSnug),
+                Text(
+                  renewing
+                      ? 'PRO UNTIL ${_date(until)} — PAYING ADDS '
+                          '${Plans.proDays} MORE DAYS'
+                      : 'RS ${Plans.proRupees} FOR ${Plans.proDays} DAYS',
                   style: p.dataSmall,
                 ),
                 const SizedBox(height: Tokens.spaceBase),
                 ActionButton(
-                  label: 'Pay Rs ${copy.rupees}',
+                  label: 'Pay Rs ${Plans.proRupees}',
                   icon: Icons.lock_open_outlined,
                   onPressed: () {
                     HapticFeedback.mediumImpact();
@@ -138,6 +132,10 @@ class Paywall {
       },
     );
   }
+
+  /// `25OCT26`, the same date format as the rest of the app.
+  static String _date(DateTime d) =>
+      DateFormat('ddMMMyy').format(d).toUpperCase();
 
   static Future<void> _tell(
     BuildContext context,
@@ -163,7 +161,7 @@ class Paywall {
                 Text(message, style: p.body),
                 const SizedBox(height: Tokens.spaceBase),
                 ActionButton(
-                  label: 'OK',
+                  label: 'Close',
                   color: p.surfaceInset,
                   onPressed: () => Navigator.of(context).pop(),
                 ),

@@ -8,10 +8,8 @@ import 'package:share_plus/share_plus.dart';
 import '../config.dart';
 import '../services/account_service.dart';
 import '../services/frame_store.dart';
-import '../services/payment_service.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
-import 'paywall.dart';
 
 /// One stored frame, full size, with the payload that was sealed into it.
 class FrameDetailScreen extends StatefulWidget {
@@ -60,9 +58,6 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
   /// Unlike sharing as a file, nothing along the way can re-encode the image,
   /// so the signature inside survives intact.
   Future<void> _sendToUser() async {
-    if (!await Paywall.require(context, Plans.sharing)) return;
-    if (!mounted) return;
-
     final DirectoryUser? who = await showModalBottomSheet<DirectoryUser>(
       context: context,
       isScrollControlled: true,

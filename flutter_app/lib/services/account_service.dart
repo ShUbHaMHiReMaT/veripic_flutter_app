@@ -12,8 +12,15 @@ import 'sealed_transfer.dart';
 /// Raised for anything the user should read, so callers never have to show a
 /// raw exception string.
 class AccountException implements Exception {
-  const AccountException(this.message);
+  const AccountException(this.message, {this.statusCode});
   final String message;
+
+  /// HTTP status when the server answered, null when it could not be reached.
+  final int? statusCode;
+
+  /// True when the server rejected the session itself, as opposed to being
+  /// unreachable. Only this should ever sign the user out.
+  bool get isAuthFailure => statusCode == 401 || statusCode == 404;
 
   @override
   String toString() => message;
@@ -93,6 +100,8 @@ class Account {
     this.sharingCode,
     this.fingerprint,
     this.photoUrl,
+    this.proUntil,
+    this.isAdmin = false,
   });
 
   final String? email;
@@ -101,6 +110,21 @@ class Account {
   final String? sharingCode;
   final String? fingerprint;
   final String? photoUrl;
+
+  /// End of the paid Pro period. Null when the account has never paid.
+  final DateTime? proUntil;
+
+  /// Pro unlocks checking photos and downloading the PDF report.
+  ///
+  /// Worked out from the end date rather than a stored flag, so a period that
+  /// runs out while the app is open stops counting straight away.
+  ///
+  /// The admin account has every feature without a period.
+  bool get isPro =>
+      isAdmin || (proUntil != null && proUntil!.isAfter(DateTime.now()));
+
+  /// The single password-login account the server treats as all-access.
+  final bool isAdmin;
 
   bool get needsUsername => username == null || username!.isEmpty;
 
@@ -118,7 +142,22 @@ class Account {
         sharingCode: json['sharingCode'] as String?,
         fingerprint: json['fingerprint'] as String?,
         photoUrl: json['photoUrl'] as String?,
+        proUntil:
+            DateTime.tryParse(json['proUntil'] as String? ?? '')?.toLocal(),
+        isAdmin: json['admin'] == true,
       );
+
+  /// Same shape the server sends, so the cached copy parses with [fromJson].
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'email': email,
+        'username': username,
+        'displayName': displayName,
+        'sharingCode': sharingCode,
+        'fingerprint': fingerprint,
+        'photoUrl': photoUrl,
+        'proUntil': proUntil?.toUtc().toIso8601String(),
+        'admin': isAdmin,
+      };
 }
 
 /// Google sign-in, plus the username directory that carries sharing codes.
@@ -140,6 +179,15 @@ class AccountService {
   final http.Client _http;
 
   static const String _sessionKey = 'geoguard_session_token_v1';
+
+  /// Last account the server returned, so a signed-in user who opens the app
+  /// offline — or while a sleeping Render instance is waking up — still gets
+  /// in instead of being sent back to the login screen.
+  static const String _accountCacheKey = 'geoguard_account_cache_v1';
+
+  /// Long enough for a free Render instance to wake from sleep, which takes
+  /// around thirty seconds on the first request after a quiet spell.
+  static const Duration _timeout = Duration(seconds: 60);
 
   /// Notifies the UI when sign-in state changes.
   static final ValueNotifier<Account?> current = ValueNotifier<Account?>(null);
@@ -171,6 +219,35 @@ class AccountService {
   }
 
   Future<bool> get isSignedIn async => (await _sessionToken()) != null;
+
+  /// Publishes [account] to the UI and remembers it for the next launch.
+  Future<Account> _setCurrent(Account account) async {
+    current.value = account;
+    try {
+      await _storage.write(
+        key: _accountCacheKey,
+        value: jsonEncode(account.toJson()),
+      );
+    } catch (_) {
+      // Not cached: the next offline launch shows the login screen instead.
+    }
+    return account;
+  }
+
+  Future<Account?> _cachedAccount() async {
+    try {
+      final String? raw = await _storage.read(key: _accountCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final Object? decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? Account.fromJson(decoded) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Account _accountFrom(Map<String, dynamic> body) => Account.fromJson(
+        (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+      );
 
   // =====================================================================
   // Google
@@ -229,38 +306,64 @@ class AccountService {
     );
 
     await _storeSession(body['token'] as String?);
-    Account account = Account.fromJson(
-      (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
-    );
+    return _setCurrent(await _publishSharingCodeIfStale(_accountFrom(body)));
+  }
 
-    account = await _publishSharingCodeIfStale(account);
-    current.value = account;
-    return account;
+  /// Signs in the admin account with its username and password.
+  ///
+  /// Only the one account configured on the server accepts a password; every
+  /// other account signs in with Google. The password is checked by the
+  /// server and never stored on this phone — only the session it returns is.
+  Future<Account> signInWithPassword({
+    required String username,
+    required String password,
+  }) async {
+    if (!AppConfig.hasApi) throw AccountException(AppConfig.setupHint);
+
+    final Map<String, dynamic> body = await _post(
+      '/auth/password',
+      <String, dynamic>{'username': username.trim(), 'password': password},
+    );
+    await _storeSession(body['token'] as String?);
+    return _setCurrent(await _publishSharingCodeIfStale(_accountFrom(body)));
   }
 
   /// Re-reads the account behind a stored session. Null when signed out.
+  ///
+  /// Shows the cached account first, then refreshes it from the server. Only
+  /// a session the server actually rejects signs the user out; an unreachable
+  /// server leaves them signed in with what this phone last knew.
   Future<Account?> restore() async {
     if (!AppConfig.accountsEnabled) return null;
     if (await _sessionToken() == null) return null;
 
+    final Account? cached = await _cachedAccount();
+    if (cached != null) current.value = cached;
+
     try {
       final Map<String, dynamic> body = await _get('/me');
-      Account account = Account.fromJson(
-        (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
-      );
-      account = await _publishSharingCodeIfStale(account);
-      current.value = account;
-      return account;
-    } on AccountException {
-      // Expired or revoked — drop it rather than leaving the UI half signed in.
-      await _storeSession(null);
-      current.value = null;
-      return null;
+      return _setCurrent(await _publishSharingCodeIfStale(_accountFrom(body)));
+    } on AccountException catch (e) {
+      if (e.isAuthFailure) {
+        // Expired or revoked — drop it rather than leaving the UI half signed in.
+        await signOut();
+        return null;
+      }
+      return cached;
     }
   }
 
+  /// Fetches the latest account, including its Pro period, from the server.
+  Future<Account> refreshAccount() async =>
+      _setCurrent(_accountFrom(await _get('/me')));
+
   Future<void> signOut() async {
     await _storeSession(null);
+    try {
+      await _storage.delete(key: _accountCacheKey);
+    } catch (_) {
+      // Nothing cached, or storage unavailable — either way it is gone.
+    }
     current.value = null;
     try {
       if (_googleReady) await GoogleSignIn.instance.signOut();
@@ -278,11 +381,20 @@ class AccountService {
       '/me/username',
       <String, dynamic>{'username': username},
     );
-    final Account account = Account.fromJson(
-      (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+    return _setCurrent(_accountFrom(body));
+  }
+
+  /// Asks whether [username] is free, for live feedback while typing.
+  ///
+  /// Returns null when free, otherwise the reason it cannot be used. This is
+  /// only a hint — two people can see "free" at the same moment, and the
+  /// server's unique index decides who actually gets it on [claimUsername].
+  Future<String?> usernameProblem(String username) async {
+    final Map<String, dynamic> body = await _get(
+      '/users/available?u=${Uri.encodeQueryComponent(username.trim())}',
     );
-    current.value = account;
-    return account;
+    if (body['available'] == true) return null;
+    return body['reason'] as String? ?? 'That username cannot be used.';
   }
 
   /// Pushes this install's public key into the directory.
@@ -295,11 +407,7 @@ class AccountService {
         'encryptionKey': id.encryptionPublicKeyB64,
       },
     );
-    final Account account = Account.fromJson(
-      (body['user'] as Map<String, dynamic>?) ?? <String, dynamic>{},
-    );
-    current.value = account;
-    return account;
+    return _setCurrent(_accountFrom(body));
   }
 
   Future<Account> _publishSharingCodeIfStale(Account account) async {
@@ -322,7 +430,8 @@ class AccountService {
         await _get('/users/search?q=${Uri.encodeQueryComponent(q)}');
 
     return <DirectoryUser>[
-      for (final Object? row in (body['results'] as List<dynamic>? ?? const <dynamic>[]))
+      for (final Object? row
+          in (body['results'] as List<dynamic>? ?? const <dynamic>[]))
         if (row is Map<String, dynamic>) DirectoryUser.fromJson(row),
     ];
   }
@@ -371,28 +480,19 @@ class AccountService {
   // Payments
   // =====================================================================
 
-  /// Plans this account has paid for.
-  Future<List<String>> entitlements() async {
-    final Map<String, dynamic> body = await _get('/payments/entitlements');
-    return <String>[
-      for (final Object? e
-          in (body['entitlements'] as List<dynamic>? ?? const <dynamic>[]))
-        if (e is String) e,
-    ];
-  }
-
   /// Asks the server to open a Razorpay order.
   ///
   /// The amount is set server-side from a fixed price list, so a patched app
-  /// cannot buy a plan for one rupee.
+  /// cannot change what it pays.
   Future<Map<String, dynamic>> createOrder(String plan) =>
       _post('/payments/order', <String, dynamic>{'plan': plan});
 
-  /// Hands Razorpay's response to the server for verification.
+  /// Hands Razorpay's response to the server for verification, and returns
+  /// the account with its new Pro period.
   ///
   /// Nothing is unlocked until this returns: the signature can only be
   /// reproduced with the key secret, which lives on the server.
-  Future<List<String>> verifyPayment({
+  Future<Account> verifyPayment({
     required String orderId,
     required String paymentId,
     required String signature,
@@ -403,11 +503,7 @@ class AccountService {
       'paymentId': paymentId,
       'signature': signature,
     });
-    return <String>[
-      for (final Object? e
-          in (body['entitlements'] as List<dynamic>? ?? const <dynamic>[]))
-        if (e is String) e,
-    ];
+    return _setCurrent(_accountFrom(body));
   }
 
   // =====================================================================
@@ -478,7 +574,7 @@ class AccountService {
         headers: <String, String>{
           if (token != null) 'authorization': 'Bearer $token',
         },
-      ).timeout(const Duration(minutes: 2));
+      ).timeout(const Duration(minutes: 3));
     } catch (_) {
       throw const AccountException('Could not download that photo.');
     }
@@ -534,7 +630,7 @@ class AccountService {
 
     final http.Response response;
     try {
-      response = await request().timeout(const Duration(seconds: 20));
+      response = await request().timeout(_timeout);
     } catch (_) {
       throw const AccountException(
         'Could not reach the GeoGuard server. Check your connection.',
@@ -556,10 +652,10 @@ class AccountService {
     throw AccountException(
       body['error'] as String? ??
           'The server returned an error (${response.statusCode}).',
+      statusCode: response.statusCode,
     );
   }
 }
-
 
 // AES-GCM over a multi-megabyte photo is heavy enough to drop frames, so both
 // directions run off the UI isolate. Top-level functions, because `compute`

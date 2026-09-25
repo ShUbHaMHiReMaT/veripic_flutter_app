@@ -1,7 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/app_shell.dart';
+import 'screens/auth_gate.dart';
 import 'theme/theme_controller.dart';
 import 'theme/veripic_theme.dart';
 
@@ -37,7 +37,9 @@ class GeoGuardApp extends StatelessWidget {
         // Defaults to following the device; the toggle in the app bar lets the
         // user pin light or dark instead.
         themeMode: mode,
-        home: AppShell(themeController: themeController),
+        // Login first: the gate shows the login page, then the username
+        // picker, then the app.
+        home: AuthGate(themeController: themeController),
       ),
     );
   }

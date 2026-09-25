@@ -1,65 +1,63 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import 'account_service.dart';
 
-/// What a user can unlock. Names match the server's `PLANS`.
+/// What a user can buy. Names match the server's `PLANS`.
 class Plans {
   const Plans._();
 
-  /// Checking whether a photo is real.
-  static const String verify = 'verify';
+  /// Checking whether a photo is real, and downloading the PDF report of the
+  /// check. Rs 1 for 30 days; paying again adds another 30 on top.
+  static const String pro = 'pro';
 
-  /// Sending a photo to another GeoGuard user, encrypted.
-  static const String sharing = 'sharing';
-
-  /// Exporting a check as the signed PDF evidence certificate.
-  static const String certificate = 'certificate';
+  static const int proRupees = 1;
+  static const int proDays = 30;
 }
 
 /// Razorpay checkout.
 ///
 /// The app opens the sheet and reports the result; it never decides whether
 /// the payment worked. Razorpay's response is handed to the server, which
-/// reproduces the HMAC with the key secret and only then grants anything. A
-/// client that unlocked its own features would be bypassed with a two-line
-/// patch to the APK.
+/// reproduces the HMAC with the key secret and only then extends the Pro
+/// period. A client that unlocked its own features would be bypassed with a
+/// two-line patch to the APK.
 class PaymentService {
   PaymentService({AccountService? account})
       : _account = account ?? AccountService();
 
   final AccountService _account;
 
-  /// Entitlements this phone knows about, for the UI to listen to.
-  static final ValueNotifier<Set<String>> entitlements =
-      ValueNotifier<Set<String>>(<String>{});
+  /// True while the signed-in account's Pro period is running.
+  ///
+  /// Read from the account the server last returned, so it is the same answer
+  /// on every screen and follows the account to another phone.
+  static bool get isPro => AccountService.current.value?.isPro ?? false;
 
-  static bool has(String plan) => entitlements.value.contains(plan);
-
-  Future<Set<String>> refresh() async {
+  /// Re-reads the account so a payment made elsewhere — another phone, or one
+  /// the webhook granted after the app was closed mid-payment — shows up.
+  Future<bool> refresh() async {
     try {
-      final List<String> granted = await _account.entitlements();
-      entitlements.value = granted.toSet();
+      await _account.refreshAccount();
     } on AccountException {
-      // Signed out or offline — leave whatever is already known rather than
+      // Signed out or offline — keep what is already known rather than
       // revoking access the user has paid for.
     }
-    return entitlements.value;
+    return isPro;
   }
 
-  /// Runs checkout for [plan] and returns true once the server confirms it.
+  /// Runs checkout for Pro and returns true once the server confirms it.
   ///
   /// Completes only after verification, so a caller can unlock immediately
   /// without a second round trip.
-  Future<bool> purchase(String plan) async {
-    final Map<String, dynamic> order = await _account.createOrder(plan);
+  Future<bool> purchasePro() async {
+    final Map<String, dynamic> order = await _account.createOrder(Plans.pro);
 
     final Razorpay razorpay = Razorpay();
     final Completer<bool> done = Completer<bool>();
 
-    Future<void> finish(bool ok, [Object? error]) async {
+    void finish(bool ok, [Object? error]) {
       if (done.isCompleted) return;
       if (error != null) {
         done.completeError(error);
@@ -72,21 +70,20 @@ class PaymentService {
         (PaymentSuccessResponse response) async {
       try {
         // The only path that grants anything.
-        final List<String> granted = await _account.verifyPayment(
+        final Account account = await _account.verifyPayment(
           orderId: order['orderId'] as String,
           paymentId: response.paymentId ?? '',
           signature: response.signature ?? '',
         );
-        entitlements.value = granted.toSet();
-        await finish(granted.contains(plan));
+        finish(account.isPro);
       } catch (e) {
-        await finish(false, e);
+        finish(false, e);
       }
     });
 
     razorpay.on(Razorpay.EVENT_PAYMENT_ERROR,
-        (PaymentFailureResponse response) async {
-      await finish(
+        (PaymentFailureResponse response) {
+      finish(
         false,
         AccountException(
           response.message?.isNotEmpty == true

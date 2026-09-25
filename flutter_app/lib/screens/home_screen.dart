@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../config.dart';
 import '../services/account_service.dart';
 import '../services/device_service.dart';
 import '../services/identity_service.dart';
+import '../services/payment_service.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
 import 'camera_screen.dart';
 import 'inbox_screen.dart';
+import 'paywall.dart';
 import 'senders_screen.dart';
 import 'verify_screen.dart';
 
@@ -239,38 +242,18 @@ class _Identity {
   final PortableIdentity portable;
 }
 
-
-/// Sign-in state, on the first screen rather than buried two taps deep.
+/// Who is signed in and whether they have Pro, on the first screen.
 ///
-/// It also has to explain *why* there is no sign-in button when accounts were
-/// not configured at build time. Silently hiding the feature is what made it
-/// look like sign-in had never been built.
-class _AccountBanner extends StatefulWidget {
+/// It also has to explain *why* there is no account when accounts were not
+/// configured at build time. Silently hiding the feature is what made it look
+/// like sign-in had never been built.
+class _AccountBanner extends StatelessWidget {
   const _AccountBanner();
 
-  @override
-  State<_AccountBanner> createState() => _AccountBannerState();
-}
-
-class _AccountBannerState extends State<_AccountBanner> {
-  final AccountService _account = AccountService();
-
-  @override
-  void initState() {
-    super.initState();
-    // Best effort: a failure here just leaves the signed-out state showing.
-    if (AppConfig.accountsEnabled) {
-      _account.restore().catchError((_) => null);
-    }
-  }
-
-  void _openSenders() {
+  void _openSenders(BuildContext context) {
     HapticFeedback.mediumImpact();
     Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const SendersScreen()))
-        .then((_) {
-      if (mounted) setState(() {});
-    });
+        .push(MaterialPageRoute<void>(builder: (_) => const SendersScreen()));
   }
 
   @override
@@ -299,47 +282,73 @@ class _AccountBannerState extends State<_AccountBanner> {
       );
     }
 
+    // The gate in front of the app guarantees an account by the time this
+    // builds; listening keeps the Pro badge current after a payment.
     return ValueListenableBuilder<Account?>(
       valueListenable: AccountService.current,
       builder: (BuildContext context, Account? account, _) {
-        final bool signedIn = account != null;
-        return PressCard(
-          onTap: _openSenders,
-          child: Row(
+        if (account == null) return const SizedBox.shrink();
+
+        final bool pro = account.isPro;
+        final String plan = account.isAdmin
+            ? 'ADMIN — ALL FEATURES'
+            : pro
+                ? 'PRO UNTIL ${_date(account.proUntil!)}'
+                : 'FREE — CHECKING PHOTOS NEEDS PRO';
+
+        return FieldCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              IconTile(
-                icon: signedIn ? Icons.person : Icons.login,
-                color: signedIn ? Tokens.statusOk : Tokens.accent,
-              ),
-              const SizedBox(width: Tokens.spaceSnug),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      signedIn
-                          ? (account.username != null
-                              ? '@${account.username}'
-                              : 'Pick a username')
-                          : 'Sign in with Google',
-                      style: p.cardTitle,
-                    ),
-                    const SizedBox(height: Tokens.spaceHair),
-                    Text(
-                      signedIn
-                          ? 'Friends can find you by name'
-                          : 'So friends can find you by name',
-                      style: p.dataSmall,
-                    ),
-                  ],
+              Semantics(
+                button: true,
+                label: 'Your account',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _openSenders(context),
+                  child: Row(
+                    children: <Widget>[
+                      const IconTile(
+                          icon: Icons.person, color: Tokens.statusOk),
+                      const SizedBox(width: Tokens.spaceSnug),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Text('@${account.username ?? ''}',
+                                style: p.cardTitle),
+                            const SizedBox(height: Tokens.spaceHair),
+                            Text(plan, style: p.dataSmall),
+                          ],
+                        ),
+                      ),
+                      StatusBadge(
+                        label: pro ? 'pro' : 'free',
+                        color: pro ? Tokens.accent : Tokens.tintNull,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              Icon(Icons.chevron_right, color: p.textSecondary),
+              if (!account.isAdmin) ...<Widget>[
+                const SizedBox(height: Tokens.spaceSnug),
+                ActionButton(
+                  label: pro
+                      ? 'Add ${Plans.proDays} days for Rs ${Plans.proRupees}'
+                      : 'Get Pro for Rs ${Plans.proRupees}',
+                  icon: Icons.lock_open_outlined,
+                  color: pro ? p.surfaceInset : Tokens.accent,
+                  onPressed: () => Paywall.buyPro(context),
+                ),
+              ],
             ],
           ),
         );
       },
     );
   }
+
+  static String _date(DateTime d) =>
+      DateFormat('ddMMMyy').format(d).toUpperCase();
 }

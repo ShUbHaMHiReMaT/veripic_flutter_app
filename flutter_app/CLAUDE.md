@@ -179,5 +179,7 @@ wrong, so treat it as a first-class subsystem, not a UI overlay.
 
 - Gradients, blurs, glows, or soft shadows — depth is the hard offset shadow, nothing else
 - Filters or beautification
-- Accounts or sign-in before first capture
+- Accounts or sign-in before first capture — *superseded:* builds configured with
+  a server now open on a login page by the owner's decision. Builds without one
+  still run with no account.
 - Any mascot or illustration inside the viewfinder or the check report
