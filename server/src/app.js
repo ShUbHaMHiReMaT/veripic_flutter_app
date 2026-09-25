@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 
+import { checkAdminLogin, ensureAdminUser, adminUsername } from './admin.js';
 import { issueSession, requireSession, verifyGoogleIdToken } from './auth.js';
 import { close, connect, users } from './db.js';
 import { EVENTS, logEvent, recentEvents } from './events.js';
@@ -13,6 +14,7 @@ import {
 } from './keys.js';
 import { paymentsRouter, webhookRouter } from './payments.js';
 import { sharesRouter } from './shares.js';
+import { privateView, publicView } from './views.js';
 
 export function createApp() {
 const app = express();
@@ -31,29 +33,6 @@ app.use('/payments/webhook', webhookRouter());
 app.use('/payments', paymentsRouter());
 
 app.use(express.json({ limit: '16kb' }));
-
-/** What a user looks like to somebody else. Never the email, never the sub. */
-function publicView(user) {
-  return {
-    username: user.username,
-    displayName: user.displayName,
-    sharingCode: user.signingPublicKey,
-    // Needed to seal a photo to this person. Public by design: it can wrap a
-    // key to them and do nothing else.
-    encryptionKey: user.encryptionPublicKey ?? null,
-    fingerprint: user.fingerprint,
-    canReceive: Boolean(user.encryptionPublicKey),
-  };
-}
-
-/** What a user looks like to themselves. */
-function privateView(user) {
-  return {
-    ...publicView(user),
-    email: user.email,
-    photoUrl: user.photoUrl,
-  };
-}
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -121,6 +100,40 @@ app.post(
   },
 );
 
+/**
+ * Password sign-in, for the single admin account only.
+ *
+ * Every other account signs in with Google. The limit is tight because this
+ * is the one route where a guess can be checked: ten tries per IP per fifteen
+ * minutes makes working through even a short password list impractical.
+ */
+app.post(
+  '/auth/password',
+  rateLimit({ windowMs: 15 * 60_000, limit: 10 }),
+  async (req, res) => {
+    const { username, password } = req.body ?? {};
+    if (!checkAdminLogin(username, password)) {
+      // Same answer for a wrong name and a wrong password.
+      return res.status(401).json({ error: 'Wrong username or password.' });
+    }
+
+    await ensureAdminUser();
+    const user = await users().findOne({ username: adminUsername(), role: 'admin' });
+    if (!user) {
+      return res.status(409).json({
+        error: 'The admin username is held by another account.',
+      });
+    }
+
+    await logEvent(user.googleSub, EVENTS.signedIn, { method: 'password' });
+    return res.json({
+      token: issueSession(user),
+      user: privateView(user),
+      needsUsername: false,
+    });
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Me
 // ---------------------------------------------------------------------------
@@ -140,10 +153,15 @@ app.post('/me/username', requireSession, async (req, res) => {
   }
 
   try {
-    await users().updateOne(
-      { googleSub: req.session.sub },
+    // Set once. Photos are addressed to a username, so renaming would strand
+    // every photo already waiting in this person's inbox.
+    const result = await users().updateOne(
+      { googleSub: req.session.sub, username: null },
       { $set: { username, updatedAt: new Date() } },
     );
+    if (result.matchedCount === 0) {
+      return res.status(409).json({ error: 'You already have a username.' });
+    }
   } catch (e) {
     // The unique index is what actually decides this, so the duplicate-key
     // error is the answer rather than an unexpected failure.
@@ -247,11 +265,39 @@ app.get(
         // Someone who has not published a key yet cannot be verified, so
         // listing them would only produce a dead end.
         signingPublicKey: { $ne: null },
+        // Nobody needs to find themselves.
+        googleSub: { $ne: req.session.sub },
       })
       .limit(20)
       .toArray();
 
     return res.json({ results: results.map(publicView) });
+  },
+);
+
+/**
+ * Live feedback for the username picker.
+ *
+ * Only a hint: two people can see "available" for the same name at once, and
+ * the unique index on claim is what actually decides who gets it.
+ */
+app.get(
+  '/users/available',
+  requireSession,
+  rateLimit({ windowMs: 60_000, limit: 120 }),
+  async (req, res) => {
+    const username = normaliseUsername(req.query.u);
+    if (!username) {
+      return res.json({
+        available: false,
+        reason: 'Use 3-20 characters: letters, numbers and underscore.',
+      });
+    }
+    const taken = await users().countDocuments({ username }, { limit: 1 });
+    return res.json({
+      available: taken === 0,
+      reason: taken === 0 ? null : 'That username is taken.',
+    });
   },
 );
 

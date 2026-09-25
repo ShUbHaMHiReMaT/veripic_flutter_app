@@ -198,4 +198,34 @@ describe('directory API', { skip: !HAS_DB }, () => {
     const { results } = await res.json();
     assert.equal(results.length, 0, 'a user with no key cannot verify anything');
   });
+
+  it('reports whether a username is free, ignoring case', async () => {
+    const token = await authFor(subs[1]);
+    const taken = await (await call('/users/available?u=ALICE_test', { token })).json();
+    assert.equal(taken.available, false);
+
+    const free = await (await call('/users/available?u=nobody_has_this', { token })).json();
+    assert.equal(free.available, true);
+
+    const bad = await (await call('/users/available?u=a!', { token })).json();
+    assert.equal(bad.available, false);
+  });
+
+  it('a username is set once and cannot be swapped for another', async () => {
+    const token = await authFor(subs[0]);
+    const res = await call('/me/username', {
+      token,
+      method: 'POST',
+      body: { username: 'alice_renamed' },
+    });
+    assert.equal(res.status, 409);
+    const me = await (await call('/me', { token })).json();
+    assert.equal(me.user.username, 'alice_test');
+  });
+
+  it('never lists the person searching', async () => {
+    const token = await authFor(subs[0]);
+    const { results } = await (await call('/users/search?q=alice', { token })).json();
+    assert.equal(results.some((r) => r.username === 'alice_test'), false);
+  });
 });

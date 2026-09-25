@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 
 import { createApp } from '../src/app.js';
 import { close, connect, getDb, users } from '../src/db.js';
-import { PLANS } from '../src/payments.js';
+import { PLANS, PRO_DAYS } from '../src/payments.js';
 
 const HAS_DB = Boolean(process.env.MONGODB_URI);
 
@@ -15,6 +15,8 @@ describe('payment verification', { skip: !HAS_DB }, () => {
   let base;
   const sub = 'pay-test-dave';
   const orderId = 'order_TEST123';
+  const renewalId = 'order_TEST456';
+  const DAY = 24 * 60 * 60 * 1000;
   const secret = 'test-razorpay-secret';
 
   const call = (path, { token, method = 'GET', body } = {}) =>
@@ -36,14 +38,13 @@ describe('payment verification', { skip: !HAS_DB }, () => {
 
     await connect();
     await users().deleteMany({ googleSub: sub });
-    await getDb().collection('payments').deleteMany({ orderId });
+    await getDb().collection('payments').deleteMany({ orderId: { $in: [orderId, renewalId] } });
 
     const now = new Date();
     await users().insertOne({
       googleSub: sub,
       username: 'dave_pay',
       email: 'dave@example.com',
-      entitlements: [],
       createdAt: now,
       updatedAt: now,
     });
@@ -54,8 +55,8 @@ describe('payment verification', { skip: !HAS_DB }, () => {
     await getDb().collection('payments').insertOne({
       orderId,
       googleSub: sub,
-      plan: 'verify',
-      amount: PLANS.verify.amount,
+      plan: 'pro',
+      amount: PLANS.pro.amount,
       status: 'created',
       createdAt: now,
     });
@@ -67,7 +68,7 @@ describe('payment verification', { skip: !HAS_DB }, () => {
 
   after(async () => {
     await users().deleteMany({ googleSub: sub });
-    await getDb().collection('payments').deleteMany({ orderId });
+    await getDb().collection('payments').deleteMany({ orderId: { $in: [orderId, renewalId] } });
     server?.close();
     await close();
   });
@@ -91,23 +92,64 @@ describe('payment verification', { skip: !HAS_DB }, () => {
 
     assert.equal(res.status, 400);
     const user = await users().findOne({ googleSub: sub });
-    assert.deepEqual(user.entitlements, []);
+    assert.equal(user.proUntil, undefined);
   });
 
-  it('grants the plan on a signature Razorpay would have produced', async () => {
-    const paymentId = 'pay_REAL123';
-    const signature = createHmac('sha256', secret)
-      .update(`${orderId}|${paymentId}`)
-      .digest('hex');
+  const sign = (order, paymentId) =>
+    createHmac('sha256', secret).update(`${order}|${paymentId}`).digest('hex');
 
+  it('grants a month of Pro on a signature Razorpay would have produced', async () => {
+    const paymentId = 'pay_REAL123';
     const res = await call('/payments/verify', {
       token,
       method: 'POST',
-      body: { orderId, paymentId, signature },
+      body: { orderId, paymentId, signature: sign(orderId, paymentId) },
     });
 
     assert.equal(res.status, 200);
-    assert.deepEqual((await res.json()).entitlements, ['verify']);
+    const body = await res.json();
+    assert.equal(body.pro, true);
+    assert.equal(body.user.pro, true);
+
+    const left = new Date(body.proUntil).getTime() - Date.now();
+    assert.ok(Math.abs(left - PRO_DAYS * DAY) < 60_000, `unexpected period ${left}`);
+  });
+
+  it('does not grant the same payment twice', async () => {
+    const before = (await users().findOne({ googleSub: sub })).proUntil;
+    const paymentId = 'pay_REAL123';
+    const res = await call('/payments/verify', {
+      token,
+      method: 'POST',
+      body: { orderId, paymentId, signature: sign(orderId, paymentId) },
+    });
+
+    assert.equal(res.status, 200);
+    const after = (await users().findOne({ googleSub: sub })).proUntil;
+    assert.equal(after.getTime(), before.getTime());
+  });
+
+  it('a renewal stacks on top of the time already left', async () => {
+    const before = (await users().findOne({ googleSub: sub })).proUntil;
+    await getDb().collection('payments').insertOne({
+      orderId: renewalId,
+      googleSub: sub,
+      plan: 'pro',
+      amount: PLANS.pro.amount,
+      status: 'created',
+      createdAt: new Date(),
+    });
+
+    const paymentId = 'pay_RENEW1';
+    const res = await call('/payments/verify', {
+      token,
+      method: 'POST',
+      body: { orderId: renewalId, paymentId, signature: sign(renewalId, paymentId) },
+    });
+
+    assert.equal(res.status, 200);
+    const after = (await users().findOne({ googleSub: sub })).proUntil;
+    assert.equal(after.getTime() - before.getTime(), PRO_DAYS * DAY);
   });
 
   it('refuses to verify somebody else\'s order', async () => {
@@ -121,6 +163,16 @@ describe('payment verification', { skip: !HAS_DB }, () => {
       body: { orderId, paymentId: 'x', signature: 'y' },
     });
     assert.equal(res.status, 404);
+  });
+
+  it('reports an expired period as not Pro', async () => {
+    await users().updateOne(
+      { googleSub: sub },
+      { $set: { proUntil: new Date(Date.now() - DAY) } },
+    );
+    const body = await (await call('/payments/entitlements', { token })).json();
+    assert.equal(body.pro, false);
+    assert.deepEqual(body.entitlements, []);
   });
 
   it('needs a session to see entitlements', async () => {

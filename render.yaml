@@ -1,0 +1,40 @@
+# Render blueprint for the GeoGuard server.
+#
+# Render → New → Blueprint → pick this repo. It reads this file, creates the
+# web service, and asks for every `sync: false` value in the dashboard — so no
+# secret is ever written here or committed.
+services:
+  - type: web
+    name: geoguard-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Atlas connection string for a user with readWrite on one database.
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: geoguard
+      # Web OAuth client id(s), comma-separated. Not an AIza... API key.
+      - key: GOOGLE_WEB_CLIENT_ID
+        sync: false
+      # Signs session tokens. Render generates a long random value.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      # The one password-login account, with every feature unlocked. Leave
+      # ADMIN_PASSWORD empty to switch that account off.
+      - key: ADMIN_USERNAME
+        value: doom
+      - key: ADMIN_PASSWORD
+        sync: false

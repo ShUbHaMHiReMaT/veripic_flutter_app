@@ -10,13 +10,10 @@ import { PLANS } from '../src/payments.js';
 
 const HAS_DB = Boolean(process.env.MONGODB_URI);
 
-describe('the three paid plans', () => {
-  it('covers checking, sending and the certificate', () => {
-    assert.deepEqual(Object.keys(PLANS).sort(), [
-      'certificate',
-      'sharing',
-      'verify',
-    ]);
+describe('the paid plan', () => {
+  it('is a single Pro plan that lasts a month', () => {
+    assert.deepEqual(Object.keys(PLANS), ['pro']);
+    assert.equal(PLANS.pro.days, 30);
   });
 
   it('prices every plan server-side', () => {

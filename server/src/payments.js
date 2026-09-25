@@ -5,6 +5,7 @@ import express from 'express';
 import { requireSession } from './auth.js';
 import { getDb, users } from './db.js';
 import { EVENTS, logEvent } from './events.js';
+import { isPro, privateView } from './views.js';
 
 /**
  * Razorpay payments.
@@ -16,28 +17,25 @@ import { EVENTS, logEvent } from './events.js';
  * the key secret, which never leaves the server.
  */
 
-/** What can be bought, in paise. Server-side so the price cannot be edited. */
+/**
+ * What can be bought, in paise. Server-side so the price cannot be edited.
+ *
+ * One plan. Pro unlocks checking photos and exporting the PDF report for
+ * [PRO_DAYS] days from the moment it is paid; paying again while it is still
+ * running adds another period on top rather than wasting the remainder.
+ */
+export const PRO_DAYS = 30;
+
 export const PLANS = {
-  // Test pricing. Rs 1 is Razorpay's minimum charge; raise `amount` here when
-  // going live and nothing else has to change, because the app never sends a
-  // price — it only names a plan.
-  verify: {
-    id: 'verify',
-    name: 'Photo checking',
+  // Rs 1 is Razorpay's minimum charge. Raise `amount` here when going live and
+  // nothing else has to change, because the app never sends a price — it only
+  // names a plan.
+  pro: {
+    id: 'pro',
+    name: 'GeoGuard Pro',
     amount: 100, // Rs 1
-    description: 'Check whether a photo is real',
-  },
-  sharing: {
-    id: 'sharing',
-    name: 'Encrypted sending',
-    amount: 100, // Rs 1
-    description: 'Send photos to other GeoGuard users',
-  },
-  certificate: {
-    id: 'certificate',
-    name: 'Evidence certificate',
-    amount: 100, // Rs 1
-    description: 'Export the check as a signed PDF report',
+    days: PRO_DAYS,
+    description: `Check photos and download PDF reports for ${PRO_DAYS} days`,
   },
 };
 
@@ -80,6 +78,61 @@ function signatureMatches(expected, received) {
   return timingSafeEqual(Buffer.from(expected), Buffer.from(received));
 }
 
+/**
+ * Marks an order paid and extends the buyer's Pro period — exactly once.
+ *
+ * Both the app's own confirmation and Razorpay's webhook land here, often
+ * within a second of each other. Flipping the order's status is a single
+ * atomic update, so only the call that actually flips it adds the days; the
+ * other finds the order already paid and changes nothing.
+ *
+ * Returns true when this call granted the period.
+ */
+async function grantOrder(filter, extra = {}) {
+  const record = await getDb().collection('payments').findOneAndUpdate(
+    { ...filter, status: { $ne: 'paid' } },
+    { $set: { status: 'paid', paidAt: new Date(), ...extra } },
+  );
+  if (!record) return false;
+
+  const plan = PLANS[record.plan] ?? PLANS.pro;
+  await users().updateOne({ googleSub: record.googleSub }, [
+    {
+      $set: {
+        // Extend from whichever is later: now, or the end of the period the
+        // user already has. $max ignores a missing proUntil.
+        proUntil: {
+          $dateAdd: {
+            startDate: { $max: ['$proUntil', '$$NOW'] },
+            unit: 'day',
+            amount: plan.days,
+          },
+        },
+      },
+    },
+  ]);
+
+  await logEvent(record.googleSub, EVENTS.paymentPaid, {
+    orderId: record.orderId,
+    plan: record.plan,
+    amount: record.amount,
+    ...(extra.viaWebhook ? { viaWebhook: true } : {}),
+  });
+  return true;
+}
+
+/** The Pro state the app needs, plus the full account so it can refresh. */
+function statusBody(user) {
+  const pro = isPro(user);
+  return {
+    pro,
+    proUntil: user?.proUntil ?? null,
+    // Kept for app builds that still read a list of unlocked plans.
+    entitlements: pro ? ['pro'] : [],
+    user: user ? privateView(user) : null,
+  };
+}
+
 export function paymentsRouter() {
   const router = express.Router();
   router.use(express.json({ limit: '16kb' }));
@@ -99,11 +152,11 @@ export function paymentsRouter() {
 
   router.get('/entitlements', async (req, res) => {
     const user = await users().findOne({ googleSub: req.session.sub });
-    res.json({ entitlements: user?.entitlements ?? [] });
+    res.json(statusBody(user));
   });
 
   router.post('/order', async (req, res) => {
-    const plan = PLANS[req.body?.plan];
+    const plan = PLANS[req.body?.plan ?? 'pro'];
     if (!plan) return res.status(400).json({ error: 'Unknown plan.' });
 
     const user = await users().findOne({ googleSub: req.session.sub });
@@ -169,7 +222,7 @@ export function paymentsRouter() {
 
     if (!signatureMatches(expected, signature)) {
       await payments().updateOne(
-        { orderId },
+        { orderId, status: { $ne: 'paid' } },
         { $set: { status: 'invalid_signature', checkedAt: new Date() } },
       );
       await logEvent(req.session.sub, EVENTS.paymentRejected, {
@@ -180,24 +233,12 @@ export function paymentsRouter() {
       return res.status(400).json({ error: 'That payment could not be confirmed.' });
     }
 
-    await payments().updateOne(
-      { orderId },
-      { $set: { status: 'paid', paymentId, paidAt: new Date() } },
-    );
-    await users().updateOne(
-      { googleSub: req.session.sub },
-      { $addToSet: { entitlements: record.plan } },
-    );
-
-    await logEvent(req.session.sub, EVENTS.paymentPaid, {
-      orderId,
-      paymentId,
-      plan: record.plan,
-      amount: record.amount,
-    });
+    // False when the webhook already granted this order — the user is Pro
+    // either way, so that is still a success.
+    await grantOrder({ orderId, googleSub: req.session.sub }, { paymentId });
 
     const user = await users().findOne({ googleSub: req.session.sub });
-    return res.json({ entitlements: user.entitlements ?? [] });
+    return res.json(statusBody(user));
   });
 
   return router;
@@ -232,22 +273,12 @@ export function webhookRouter() {
 
     if (event.event === 'payment.captured') {
       const orderId = event.payload?.payment?.entity?.order_id;
-      const record = await getDb().collection('payments').findOne({ orderId });
-      if (record && record.status !== 'paid') {
-        await getDb().collection('payments').updateOne(
+      const paymentId = event.payload?.payment?.entity?.id;
+      if (typeof orderId === 'string') {
+        await grantOrder(
           { orderId },
-          { $set: { status: 'paid', paidAt: new Date(), viaWebhook: true } },
+          { viaWebhook: true, ...(paymentId ? { paymentId } : {}) },
         );
-        await users().updateOne(
-          { googleSub: record.googleSub },
-          { $addToSet: { entitlements: record.plan } },
-        );
-        await logEvent(record.googleSub, EVENTS.paymentPaid, {
-          orderId,
-          plan: record.plan,
-          amount: record.amount,
-          viaWebhook: true,
-        });
       }
     }
 
