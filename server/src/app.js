@@ -13,6 +13,7 @@ import {
   normaliseUsername,
 } from './keys.js';
 import { paymentsRouter, webhookRouter } from './payments.js';
+import { pagesRouter } from './pages.js';
 import { sharesRouter } from './shares.js';
 import { privateView, publicView } from './views.js';
 
@@ -35,6 +36,9 @@ app.use('/payments', paymentsRouter());
 app.use(express.json({ limit: '16kb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// Home page and privacy policy, required by Google's OAuth consent screen.
+app.use(pagesRouter());
 
 // ---------------------------------------------------------------------------
 // Sign in
