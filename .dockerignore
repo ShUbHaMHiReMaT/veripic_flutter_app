@@ -1,0 +1,10 @@
+# Only the server goes into the image. Keeping the Flutter app, IDE files and
+# crash logs out makes the build context small and the upload quick.
+.git
+.idea
+flutter_app
+*.log
+*.txt
+server/node_modules
+server/test
+server/.env
