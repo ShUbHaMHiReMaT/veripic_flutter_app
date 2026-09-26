@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
 import '../services/account_service.dart';
@@ -8,6 +9,7 @@ import '../services/device_service.dart';
 import '../services/identity_service.dart';
 import '../services/payment_service.dart';
 import '../services/security_service.dart';
+import '../services/update_service.dart';
 import '../theme/veripic_theme.dart';
 import 'camera_screen.dart';
 import 'inbox_screen.dart';
@@ -36,6 +38,7 @@ class HomeScreen extends StatelessWidget {
         Tokens.spaceSection,
       ),
       children: <Widget>[
+        const _UpdateBanner(),
         Text('Take a photo.\nCheck it anytime.', style: p.display),
         const SizedBox(height: Tokens.spaceSection),
         ActionButton(
@@ -351,4 +354,82 @@ class _AccountBanner extends StatelessWidget {
 
   static String _date(DateTime d) =>
       DateFormat('ddMMMyy').format(d).toUpperCase();
+}
+
+/// Tells the user a newer GeoGuard has been published, and links to it.
+///
+/// Takes no space at all when the app is up to date or the check fails.
+class _UpdateBanner extends StatefulWidget {
+  const _UpdateBanner();
+
+  @override
+  State<_UpdateBanner> createState() => _UpdateBannerState();
+}
+
+class _UpdateBannerState extends State<_UpdateBanner> {
+  late final Future<AvailableUpdate?> _future = UpdateService().check();
+
+  Future<void> _download(AvailableUpdate update) async {
+    HapticFeedback.mediumImpact();
+    final bool opened =
+        await launchUrl(update.url, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+            SnackBar(content: Text('Open ${update.url} to update.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+    return FutureBuilder<AvailableUpdate?>(
+      future: _future,
+      builder: (BuildContext context, AsyncSnapshot<AvailableUpdate?> snap) {
+        final AvailableUpdate? update = snap.data;
+        if (update == null) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: Tokens.spaceSection),
+          child: AccentPanel(
+            accent: Tokens.accent,
+            background: p.surface,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text('Update available', style: p.cardTitle),
+                    ),
+                    StatusBadge(
+                      label: 'v${update.version}',
+                      color: Tokens.accent,
+                    ),
+                  ],
+                ),
+                if (update.notes != null) ...<Widget>[
+                  const SizedBox(height: Tokens.spaceTight),
+                  Text(update.notes!, style: p.body),
+                ],
+                const SizedBox(height: Tokens.spaceTight),
+                Text(
+                  'Open the downloaded file and tap Update. Your photos and '
+                  'sign-in stay.',
+                  style: p.body,
+                ),
+                const SizedBox(height: Tokens.spaceSnug),
+                ActionButton(
+                  label: 'Download update',
+                  icon: Icons.download_outlined,
+                  onPressed: () => _download(update),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
