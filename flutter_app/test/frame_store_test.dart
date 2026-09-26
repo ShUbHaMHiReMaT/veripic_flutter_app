@@ -117,4 +117,24 @@ void main() {
 
     expect(seen, 2);
   });
+
+  test('a deleted frame is gone, including a temp leftover of the same name',
+      () async {
+    // A leftover in the legacy temp directory would otherwise be listed again
+    // and the photo would come straight back after deleting it.
+    const String name = 'geoguard_1774269000000.jpg';
+    final Directory durable = await FrameStore.framesDirectory();
+    File('${durable.path}/$name').writeAsBytesSync(<int>[1, 2, 3]);
+    File('${paths.temp.path}/$name').writeAsBytesSync(<int>[1, 2, 3]);
+
+    final int before = FrameStore.revision.value;
+    final List<StoredFrame> frames = await store.list();
+    expect(frames, hasLength(1));
+
+    await store.delete(frames.single);
+
+    expect(await store.list(), isEmpty);
+    expect(File('${paths.temp.path}/$name').existsSync(), isFalse);
+    expect(FrameStore.revision.value, greaterThan(before));
+  });
 }

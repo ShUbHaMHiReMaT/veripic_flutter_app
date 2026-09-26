@@ -84,6 +84,11 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
     }
   }
 
+  Future<void> _delete() async {
+    if (!await deleteFrameWithConfirm(context, widget.frame)) return;
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final Palette p = Palette.of(context);
@@ -147,6 +152,13 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
               'like WhatsApp shrink it and the proof inside is lost.',
               style: p.body,
             ),
+          ),
+          const SizedBox(height: Tokens.spaceSnug),
+          ActionButton(
+            label: 'Delete photo',
+            icon: Icons.delete_outline,
+            color: Tokens.statusAlert,
+            onPressed: _sending ? null : _delete,
           ),
           const SizedBox(height: Tokens.spaceSection),
           const SectionHead(title: 'Saved details'),
@@ -221,7 +233,6 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
   }
 }
 
-
 /// Picks who to send a photo to, from the username directory.
 class _PickRecipientSheet extends StatefulWidget {
   const _PickRecipientSheet({required this.account});
@@ -276,7 +287,8 @@ class _PickRecipientSheetState extends State<_PickRecipientSheet> {
     final Palette p = Palette.of(context);
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         decoration: BoxDecoration(
           color: p.surface,
@@ -394,5 +406,71 @@ class _PickRecipientSheetState extends State<_PickRecipientSheet> {
         ),
       ),
     );
+  }
+}
+
+/// Asks before deleting [frame], then deletes it.
+///
+/// Returns true when the photo is gone. Shared by the photo page and the
+/// press-and-hold on the Photos grid, so both say the same thing.
+Future<bool> deleteFrameWithConfirm(
+  BuildContext context,
+  StoredFrame frame,
+) async {
+  HapticFeedback.mediumImpact();
+  final bool? go = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) {
+      final Palette p = Palette.of(context);
+      return Dialog(
+        backgroundColor: p.surface,
+        shape:
+            RoundedRectangleBorder(borderRadius: Tokens.brCard, side: p.side),
+        child: Padding(
+          padding: const EdgeInsets.all(Tokens.spaceBase),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const SectionHead(title: 'Delete this photo?'),
+              const SizedBox(height: Tokens.spaceSnug),
+              Text(
+                'It is removed from GeoGuard and cannot be brought back. The '
+                'copy in your phone gallery stays.',
+                style: p.body,
+              ),
+              const SizedBox(height: Tokens.spaceBase),
+              ActionButton(
+                label: 'Delete photo',
+                icon: Icons.delete_outline,
+                color: Tokens.statusAlert,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+              const SizedBox(height: Tokens.spaceSnug),
+              ActionButton(
+                label: 'Keep it',
+                color: p.surfaceInset,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (go != true) return false;
+
+  try {
+    await FrameStore().delete(frame);
+    return true;
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          content: Text('The photo could not be deleted. Try again.'),
+        ));
+    }
+    return false;
   }
 }

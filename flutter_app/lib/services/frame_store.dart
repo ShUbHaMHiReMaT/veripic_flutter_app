@@ -47,6 +47,32 @@ class FrameStore {
     return dir;
   }
 
+  /// Removes [frame] from this app and tells every listing to reload.
+  ///
+  /// Deletes the same filename from the legacy temp directory too, otherwise
+  /// [list] would find that leftover and the photo would reappear. The copy
+  /// saved to the phone's gallery at capture time is not touched: that one
+  /// belongs to the user's gallery, not to GeoGuard.
+  Future<void> delete(StoredFrame frame) async {
+    final String name = frame.file.uri.pathSegments.last;
+    final List<File> copies = <File>[frame.file];
+    for (final Future<Directory> source in <Future<Directory>>[
+      framesDirectory(),
+      getTemporaryDirectory(),
+    ]) {
+      try {
+        copies.add(File('${(await source).path}/$name'));
+      } catch (_) {
+        // A location that cannot be resolved has nothing of ours in it.
+      }
+    }
+
+    for (final File f in copies) {
+      if (await f.exists()) await f.delete();
+    }
+    notifyChanged();
+  }
+
   /// Every stored frame, newest first.
   ///
   /// Reads the durable directory and the legacy temp directory, so frames

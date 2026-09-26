@@ -133,48 +133,53 @@ class _FrameCell extends StatelessWidget {
     final String stamp =
         DateFormat('ddMMMyy HH:mm').format(frame.capturedAt).toUpperCase();
 
-    return PressCard(
-      padding: const EdgeInsets.all(Tokens.spaceTight),
-      semanticLabel: 'Photo taken $stamp',
-      onTap: () {
-        HapticFeedback.selectionClick();
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => FrameDetailScreen(frame: frame),
-          ),
-        );
-      },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: ClipRRect(
-              borderRadius: Tokens.brControl,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: p.surfaceInset,
-                  border: Border.all(
-                    color: p.outline,
-                    width: Tokens.borderWidth,
+    // Press and hold deletes, so clearing several photos does not mean opening
+    // each one.
+    return GestureDetector(
+      onLongPress: () => deleteFrameWithConfirm(context, frame),
+      child: PressCard(
+        padding: const EdgeInsets.all(Tokens.spaceTight),
+        semanticLabel: 'Photo taken $stamp. Press and hold to delete.',
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => FrameDetailScreen(frame: frame),
+            ),
+          );
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: ClipRRect(
+                borderRadius: Tokens.brControl,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: p.surfaceInset,
+                    border: Border.all(
+                      color: p.outline,
+                      width: Tokens.borderWidth,
+                    ),
+                    borderRadius: Tokens.brControl,
                   ),
-                  borderRadius: Tokens.brControl,
-                ),
-                child: Image.file(
-                  frame.file,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, __, ___) => Icon(
-                    Icons.broken_image_outlined,
-                    color: p.textSecondary,
+                  child: Image.file(
+                    frame.file,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.broken_image_outlined,
+                      color: p.textSecondary,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: Tokens.spaceTight),
-          Text(stamp, style: p.dataSmall),
-        ],
+            const SizedBox(height: Tokens.spaceTight),
+            Text(stamp, style: p.dataSmall),
+          ],
+        ),
       ),
     );
   }
