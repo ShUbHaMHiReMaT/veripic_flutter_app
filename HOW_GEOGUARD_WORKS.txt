@@ -23,6 +23,9 @@ Contents:
   13. What the database stores
   14. Where each part lives in the code
   15. The big problems we fixed
+  16. Deleting photos
+  17. Updates: how everyone gets the new version
+  18. Setting it up: Google, Render and building the app
 
 
 ===============================================================================
@@ -479,18 +482,52 @@ and only the server holds the password.
      App  ---HTTPS--->  Our server  --->  MongoDB
                         (holds password)
 
+USERNAMES
+
+After the first sign-in the app asks you to pick a username: 3 to 20
+letters, numbers or underscores, always stored in lowercase. Two people can
+never have the same one, because the database itself refuses a duplicate.
+A username can never be changed, because photos are sent TO a username, and
+renaming would leave photos stuck in an inbox nobody owns any more.
+
+THE ADMIN ACCOUNT
+
+There is exactly one account that signs in with a password instead of
+Google: "doom". It has every paid feature for free. Its password is set only
+in the Render dashboard (ADMIN_PASSWORD), never in the code or the app,
+because an APK is public. Only 10 password tries are allowed per 15 minutes.
+If ADMIN_PASSWORD is empty, the account does not exist.
+
+A BUILD WITHOUT A SERVER
+
+If the app is built without the server address and the Google client id,
+it skips the login page completely and works offline: taking photos,
+checking them and sharing as a file all still work, and nothing is locked.
+The home screen says "Google sign-in is off in this build". That is what the
+very first APK looked like, and it is why it never asked anybody to log in.
+
 
 ===============================================================================
 12. PAYMENTS
 ===============================================================================
 
-Three things cost money, each Rs 1 for testing:
+There is one plan, GeoGuard Pro: Rs 1 for 30 days (the lowest amount
+Razorpay allows, for testing). Pro unlocks:
 
    - Checking whether a photo is real
-   - Sending a photo to another user
-   - Exporting the PDF evidence report
+   - Downloading the PDF evidence report
 
-Taking photos and sharing as a file stay free.
+Free for everyone, always:
+
+   - Taking photos
+   - Sharing a photo as a file
+   - Sending a photo to another user inside the app
+
+Paying again while Pro is still running adds 30 more days on top of the days
+left, so nothing is wasted. The admin account has Pro without paying.
+
+Whether you have Pro is worked out from one date on the server: "Pro until".
+When that date passes, Pro stops by itself, even while the app is open.
 
 HOW A PAYMENT IS PROVED
 
@@ -502,8 +539,8 @@ HOW A PAYMENT IS PROVED
    4. Razorpay gives back a payment id and a signature.
    5. The app passes these to our server.
    6. The server recreates the signature itself using the secret key that
-      only it holds. If they match, the feature unlocks. If not, nothing
-      happens.
+      only it holds. If they match, 30 days are added to "Pro until". If
+      not, nothing happens.
 
 Step 6 is the whole point. The app never decides that it paid. If it did,
 somebody would edit the app to always say "paid" within a week.
@@ -514,6 +551,9 @@ Two more safeguards:
      be measured and used to guess the signature one character at a time.
    - There is a webhook. If you pay and then close the app before it comes
      back, Razorpay tells our server directly, and the feature still unlocks.
+   - The app's confirmation and the webhook often arrive at the same moment.
+     The order is marked "paid" in one single step, so only one of them can
+     add the 30 days. You are never given 60 days by accident.
 
 
 ===============================================================================
@@ -525,8 +565,9 @@ the database, only as locked scrambled blocks, and only until collected.
 
    users
       Google account id, email, name, username, public key, sharing code,
-      what they have paid for, when they were last seen, and counters
-      (how many logins, photos sent, photos received, checks run).
+      "Pro until" date, whether it is the admin, when they were last seen,
+      and counters (how many logins, photos sent, photos received, checks
+      run, payments).
 
    shares
       Who sent to whom, where the locked block is, its hash, and the wrapped
@@ -580,7 +621,9 @@ THE APP (folder: flutter_app/lib)
   services/account_service.dart   Google login, the username directory,
                                   sending and receiving.
   services/payment_service.dart   The payment screen.
-  services/frame_store.dart       Keeping track of saved photos.
+  services/frame_store.dart       Keeping track of saved photos, and
+                                  deleting them.
+  services/update_service.dart    Asking the server if a newer app exists.
   services/certificate_service.dart  The PDF report.
 
   screens/camera_screen.dart      The camera screen.
@@ -588,6 +631,14 @@ THE APP (folder: flutter_app/lib)
   screens/senders_screen.dart     Your code and your saved senders.
   screens/inbox_screen.dart       Photos people sent you.
   screens/paywall.dart            One place that decides if you have paid.
+  screens/auth_gate.dart          Decides what opens first: login page,
+                                  username picker, or the app.
+  screens/login_screen.dart       Google sign-in and the admin password.
+  screens/home_screen.dart        Home, your account, and the update banner.
+  screens/frames_screen.dart      The Photos grid (press and hold = delete).
+  screens/frame_detail_screen.dart  One photo: send, share, delete.
+  config.dart                     The server address and Google client id,
+                                  fixed when the APK is built.
 
 THE SERVER (folder: server/src)
 
@@ -599,6 +650,10 @@ THE SERVER (folder: server/src)
   shares.js    Storing and handing out locked photos.
   payments.js  Razorpay orders and signature checking.
   events.js    The diary.
+  admin.js     The one password account ("doom").
+  views.js     Exactly which user fields are allowed to leave the server.
+  pages.js     The home page and privacy policy Google asks for.
+  release.js   The newest app version, for the update banner.
 
 
 ===============================================================================
@@ -637,6 +692,152 @@ THE SERVER (folder: server/src)
   FIX:     Rewritten in plain words: "Looking for the hidden details",
            "3 OF 64 SPOTS DIFFER - LIMIT 10".
 
+  PROBLEM: The server was live, but the app said "Google sign-in is off in
+           this build" and never showed a login page.
+  CAUSE:   The APK was built without the server address and the Google
+           client id. These are baked in at build time, not read later.
+  FIX:     Build with --dart-define=GEOGUARD_API=... and
+           --dart-define=GOOGLE_SERVER_CLIENT_ID=... (see part 18).
+
+  PROBLEM: Picking a Google account said "Sign-in cancelled".
+  CAUSE:   Three things. The app was given the ANDROID client id where
+           Google needs the WEB one. The release signing key was never
+           registered. And the Google project was set to "Internal", which
+           only lets in accounts from one organisation, so normal Gmail
+           accounts were refused.
+  FIX:     Created a Web client and a release Android client, switched the
+           project to External, and added test users. "Cancelled" was never
+           the user cancelling; it is how Android reports a setup problem.
+
+  PROBLEM: "App not installed as package conflicts with an existing
+           package", even after uninstalling.
+  CAUSE:   An old copy signed with a different key was hiding in the phone's
+           private "Vault" profile, where it did not show up.
+  FIX:     Removed it from every profile with adb, then installed.
+
+  PROBLEM: "Downgrade detected: version code 2 is older than 2001".
+  CAUSE:   An earlier APK was built split per phone type, which adds 2000
+           to the version number. Android never installs a lower number over
+           a higher one.
+  FIX:     The build number jumped to 2002 and only ever goes up from here.
+
+
+===============================================================================
+16. DELETING PHOTOS
+===============================================================================
+
+Two ways, and both ask "Delete this photo?" first:
+
+   - Open a photo and tap "Delete photo".
+   - In the Photos grid, press and hold a photo.
+
+The photo is removed from GeoGuard's own folder (and from the old temporary
+folder earlier versions used, otherwise it would come back). The Photos and
+Locations tabs update straight away.
+
+The copy that was saved to the phone's gallery, in the GeoGuard album, is
+NOT deleted. That copy belongs to your gallery, and removing it would need
+an extra permission. The dialog says this so nobody is surprised.
+
+
+===============================================================================
+17. UPDATES: HOW EVERYONE GETS THE NEW VERSION
+===============================================================================
+
+GeoGuard is installed from an APK file, not from the Play Store, so no
+store will ever tell anyone there is a new version. The app does it itself.
+
+HOW IT WORKS
+
+   1. Every time the home screen opens, the app asks our server
+      "what is the newest version?" (the address /app/latest).
+   2. The server answers with a build number, a version name and a
+      download link.
+   3. If that build number is bigger than the one installed, a yellow
+      "Update available" card appears with a "Download update" button.
+   4. The button opens the newest GeoGuard.apk. The user taps it, then
+      "Update". Photos and sign-in stay.
+
+If the check fails (no internet, server asleep) the card simply does not
+appear. An update check must never break the home screen.
+
+The download link never changes:
+   https://github.com/ShUbHaMHiReMaT/veripic_flutter_app/releases/latest/download/GeoGuard.apk
+It always points at the newest GitHub release, as long as the file attached
+to each release is named exactly GeoGuard.apk.
+
+IMPORTANT: people who installed a version from before 1.0.1 have no update
+check at all. They have to be sent the link above once. After that they
+are told about every update automatically.
+
+HOW TO SHIP A NEW VERSION
+
+   1. Raise the version in flutter_app/pubspec.yaml. The number after "+" is
+      the build number and must always go UP (it is 2002 for 1.0.1).
+   2. Build the APK (command in part 18).
+   3. On GitHub, create a new release and attach the APK named GeoGuard.apk.
+   4. In server/src/release.js, set "build" and "version" to the same values
+      and push. Render redeploys by itself in about a minute.
+
+Everyone on 1.0.1 or newer now sees "Update available".
+
+
+===============================================================================
+18. SETTING IT UP: GOOGLE, RENDER AND BUILDING THE APP
+===============================================================================
+
+THE SERVER (Render)
+
+   Address: https://geoguard-server.onrender.com
+   It redeploys by itself whenever code is pushed to the main branch.
+   The free plan sleeps when unused, so the first request can take ~30s.
+   The app waits up to 60 seconds, so a sleeping server is slow, not broken.
+
+   Settings in the Render dashboard (never in the code):
+      MONGODB_URI            the database address and password
+      GOOGLE_WEB_CLIENT_ID   the WEB client id (below)
+      JWT_SECRET             signs login sessions
+      RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
+      ADMIN_PASSWORD         the "doom" account's password
+
+GOOGLE CLOUD (project "GeoGuard", id geoguard-509506)
+
+   Three OAuth clients, and they are NOT interchangeable:
+
+      GeoGuard server           Web          THE id the app and server use:
+         210844702277-e7ndmqd1a0kqq45kusrl3m3gguhpgm0f.apps.googleusercontent.com
+      GeoGuard Android release  Android      matches the release APK by its
+                                             package name and signing key
+      GeoGuard Android debug    Android      same, for "flutter run" builds
+
+   The Android clients are never typed anywhere; Google matches them by
+   the package name io.github.shubhamhiremat.geoguard and the SHA-1 of the
+   signing key. The Web id is the one that goes into the app and Render.
+
+   Audience is "External". While it is in "Testing", only the test users
+   listed there can sign in. Pressing "Publish app" lets any Google account
+   in. The home page and privacy policy Google asks for are served by our
+   own server at /  and  /privacy.
+
+BUILDING THE APK
+
+   From the flutter_app folder, all on one line:
+
+      flutter build apk --release --target-platform android-arm64
+        --dart-define=GEOGUARD_API=https://geoguard-server.onrender.com
+        --dart-define=GOOGLE_SERVER_CLIENT_ID=210844702277-e7ndmqd1a0kqq45kusrl3m3gguhpgm0f.apps.googleusercontent.com
+
+   The result is build/app/outputs/flutter-apk/app-release.apk, copied to
+   release/GeoGuard.apk.
+
+   Without the two --dart-define values the app builds fine but runs with
+   no login at all (see part 11).
+
+   Release builds are signed with veripic-release.jks, set up in
+   android/key.properties. Keep that file safe and never lose it: Android
+   only installs an update signed with the SAME key, and Google sign-in is
+   registered to that key's SHA-1.
+
 
 ===============================================================================
 IN ONE PARAGRAPH
@@ -649,7 +850,8 @@ phone. The matching public key is hidden inside the photo in three different
 places, so any other phone can check the signature offline and find out
 whether anything was changed. Photos can be sent locked so that not even our
 own server can read them, which also means nothing can re-save them and
-destroy the proof. Google login and usernames make friends easy to find, and
-payments are always confirmed by the server, never by the app.
+destroy the proof. Google login and usernames make friends easy to find,
+payments are always confirmed by the server, never by the app, and the app
+tells everyone when a newer version is out.
 
 ===============================================================================
