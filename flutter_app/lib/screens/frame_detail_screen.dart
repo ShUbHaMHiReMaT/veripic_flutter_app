@@ -10,6 +10,7 @@ import '../services/account_service.dart';
 import '../services/frame_store.dart';
 import '../services/security_service.dart';
 import '../theme/veripic_theme.dart';
+import 'verify_screen.dart';
 
 /// One stored frame, full size, with the payload that was sealed into it.
 class FrameDetailScreen extends StatefulWidget {
@@ -84,6 +85,22 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
     }
   }
 
+  /// Checks the stored file itself.
+  ///
+  /// Going through the gallery picker instead reads whatever copy the
+  /// gallery or a cloud backup hands back, which may no longer carry the
+  /// proof. The file in GeoGuard's own folder is the one that was signed.
+  Future<void> _check() async {
+    HapticFeedback.selectionClick();
+    final Uint8List bytes = await widget.frame.file.readAsBytes();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => VerifyScreen(initialBytes: bytes),
+      ),
+    );
+  }
+
   Future<void> _delete() async {
     if (!await deleteFrameWithConfirm(context, widget.frame)) return;
     if (mounted) Navigator.of(context).pop();
@@ -138,6 +155,12 @@ class _FrameDetailScreenState extends State<FrameDetailScreen> {
             ),
             const SizedBox(height: Tokens.spaceSnug),
           ],
+          ActionButton(
+            label: 'Check this photo',
+            icon: Icons.fact_check_outlined,
+            onPressed: _sending ? null : _check,
+          ),
+          const SizedBox(height: Tokens.spaceSnug),
           ActionButton(
             label: 'Share this photo',
             icon: Icons.ios_share,

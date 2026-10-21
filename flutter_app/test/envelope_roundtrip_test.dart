@@ -111,6 +111,30 @@ void main() {
     expect(await security.verifySignature(recovered), isTrue);
   });
 
+  test('the hashes describe the stored pixels, so an untouched photo scores zero',
+      () async {
+    final SignedImage signed = await security.signAndEmbed(
+      jpegBytes: _syntheticJpeg(),
+      position: _position(),
+      timestampUtc: DateTime.utc(2026, 3, 1, 12),
+      deviceId: 'a' * 64,
+    );
+
+    // Hashing pixels that never reached the file let JPEG rounding alone push
+    // a tile past the tolerance, so an untouched photo read as edited.
+    final img.Image stored = img.decodeJpg(signed.pngBytes)!;
+    expect(
+      security.hammingDistance(
+          security.computeBannerDHash(stored), signed.envelope.pixelHash),
+      0,
+    );
+    expect(
+      security.compareSceneTiles(
+          signed.envelope.sceneTiles, security.computeSceneTiles(stored)),
+      everyElement(0),
+    );
+  });
+
   test('the sharing code fingerprint matches the one the server derives', () {
     // The directory derives this same value in Node:
     //   createHash('sha256').update(code, 'utf8').digest('hex').slice(0, 16)

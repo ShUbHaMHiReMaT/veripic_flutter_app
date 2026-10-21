@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 
 import '../services/account_service.dart';
 import '../services/certificate_service.dart';
+import '../services/frame_store.dart';
 import '../services/identity_service.dart';
 import '../services/security_service.dart';
 import '../services/verification_service.dart';
@@ -18,7 +19,10 @@ import 'paywall.dart';
 import 'senders_screen.dart';
 
 class VerifyScreen extends StatefulWidget {
-  const VerifyScreen({super.key});
+  const VerifyScreen({super.key, this.initialBytes});
+
+  /// A photo to check straight away, such as one opened from the Photos tab.
+  final Uint8List? initialBytes;
 
   @override
   State<VerifyScreen> createState() => _VerifyScreenState();
@@ -73,13 +77,58 @@ class _VerifyScreenState extends State<VerifyScreen> {
     _draining = false;
   }
 
-  Future<void> _pick(ImageSource source) async {
-    try {
-      final XFile? file = await _picker.pickImage(source: source);
-      if (file == null) return;
+  @override
+  void initState() {
+    super.initState();
+    final Uint8List? bytes = widget.initialBytes;
+    if (bytes != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        // Checking a photo is a Pro feature, whichever way it arrives.
+        if (!await Paywall.requirePro(context)) return;
+        if (mounted) await _check(bytes);
+      });
+    }
+  }
 
+  Future<void> _pickFromGallery() async {
+    try {
+      final XFile? file = await _picker.pickImage(source: ImageSource.gallery);
+      if (file == null) return;
+      await _check(await File(file.path).readAsBytes());
+    } catch (e) {
+      _fail();
+    }
+  }
+
+  /// Picks from GeoGuard's own folder, which holds the exact signed file.
+  Future<void> _pickFromApp() async {
+    final StoredFrame? frame = await showModalBottomSheet<StoredFrame>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _FramePickerSheet(),
+    );
+    if (frame == null) return;
+    try {
+      await _check(await frame.file.readAsBytes());
+    } catch (e) {
+      _fail();
+    }
+  }
+
+  void _fail() {
+    if (!mounted) return;
+    HapticFeedback.vibrate();
+    setState(() {
+      _busy = false;
+      _failure = 'That photo could not be opened. Pick a different one.';
+    });
+  }
+
+  Future<void> _check(Uint8List bytes) async {
+    try {
       HapticFeedback.mediumImpact();
-      final Uint8List bytes = await File(file.path).readAsBytes();
       if (!mounted) return;
 
       setState(() {
@@ -110,12 +159,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       // write must not be able to break a verification.
       unawaited(AccountService().reportCheck(report.verdict.name));
     } catch (e) {
-      if (!mounted) return;
-      HapticFeedback.vibrate();
-      setState(() {
-        _busy = false;
-        _failure = 'That photo could not be opened. Pick a different one.';
-      });
+      _fail();
     }
   }
 
@@ -190,7 +234,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
     final Palette p = Palette.of(context);
 
-    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+    final _Source? source = await showModalBottomSheet<_Source>(
       context: context,
       backgroundColor: p.surface,
       shape: RoundedRectangleBorder(
@@ -208,17 +252,20 @@ class _VerifyScreenState extends State<VerifyScreen> {
             children: <Widget>[
               const SectionHead(title: 'Pick a photo'),
               const SizedBox(height: Tokens.spaceBase),
+              // The system camera is deliberately not offered here: a photo
+              // it takes is never signed, so it always read as "not taken
+              // with GeoGuard".
               ActionButton(
-                label: 'Pick from gallery',
-                icon: Icons.folder_outlined,
-                onPressed: () => Navigator.of(context).pop(ImageSource.gallery),
+                label: 'Pick from GeoGuard photos',
+                icon: Icons.photo_library_outlined,
+                onPressed: () => Navigator.of(context).pop(_Source.app),
               ),
               const SizedBox(height: Tokens.spaceSnug),
               ActionButton(
-                label: 'Take a photo',
-                icon: Icons.photo_camera_outlined,
+                label: 'Pick from gallery or files',
+                icon: Icons.folder_outlined,
                 color: Tokens.tintInfo,
-                onPressed: () => Navigator.of(context).pop(ImageSource.camera),
+                onPressed: () => Navigator.of(context).pop(_Source.gallery),
               ),
             ],
           ),
@@ -226,7 +273,14 @@ class _VerifyScreenState extends State<VerifyScreen> {
       ),
     );
 
-    if (source != null) await _pick(source);
+    switch (source) {
+      case _Source.app:
+        await _pickFromApp();
+      case _Source.gallery:
+        await _pickFromGallery();
+      case null:
+        break;
+    }
   }
 
   @override
@@ -336,6 +390,117 @@ class _Update {
   final VerifyStage stage;
   final StageState state;
   final String? detail;
+}
+
+enum _Source { app, gallery }
+
+/// GeoGuard's own photos, newest first, for checking the exact signed file.
+class _FramePickerSheet extends StatefulWidget {
+  const _FramePickerSheet();
+
+  @override
+  State<_FramePickerSheet> createState() => _FramePickerSheetState();
+}
+
+class _FramePickerSheetState extends State<_FramePickerSheet> {
+  late final Future<List<StoredFrame>> _future = FrameStore().list();
+
+  @override
+  Widget build(BuildContext context) {
+    final Palette p = Palette.of(context);
+
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.75,
+      ),
+      decoration: BoxDecoration(
+        color: p.surface,
+        border: Border(top: p.side, left: p.side, right: p.side),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(Tokens.radiusCard),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(Tokens.spaceBase),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const SectionHead(title: 'GeoGuard photos'),
+              const SizedBox(height: Tokens.spaceBase),
+              Flexible(
+                child: FutureBuilder<List<StoredFrame>>(
+                  future: _future,
+                  builder: (BuildContext context,
+                      AsyncSnapshot<List<StoredFrame>> snap) {
+                    if (snap.connectionState != ConnectionState.done) {
+                      return const LoadingState(message: 'Reading your photos');
+                    }
+                    final List<StoredFrame> frames =
+                        snap.data ?? const <StoredFrame>[];
+                    if (frames.isEmpty) {
+                      return const EmptyState(
+                        icon: Icons.photo_library_outlined,
+                        title: 'No GeoGuard photos yet',
+                        message: 'Photos you take with GeoGuard, and photos '
+                            'sent to you, appear here.',
+                      );
+                    }
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 120,
+                        mainAxisSpacing: Tokens.spaceSnug,
+                        crossAxisSpacing: Tokens.spaceSnug,
+                        childAspectRatio: 0.82,
+                      ),
+                      itemCount: frames.length,
+                      itemBuilder: (BuildContext context, int i) {
+                        final StoredFrame frame = frames[i];
+                        final String stamp = DateFormat('ddMMMyy HH:mm')
+                            .format(frame.capturedAt)
+                            .toUpperCase();
+                        return PressCard(
+                          padding: const EdgeInsets.all(Tokens.spaceTight),
+                          semanticLabel: 'Check photo taken $stamp',
+                          onTap: () => Navigator.of(context).pop(frame),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: Tokens.brControl,
+                                  child: Image.file(
+                                    frame.file,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    cacheWidth: 240,
+                                    errorBuilder: (_, __, ___) => Icon(
+                                      Icons.broken_image_outlined,
+                                      color: p.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: Tokens.spaceTight),
+                              Text(stamp, style: p.dataSmall),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _StageInfo {

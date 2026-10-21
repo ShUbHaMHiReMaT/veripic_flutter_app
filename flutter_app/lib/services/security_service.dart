@@ -1016,8 +1016,9 @@ class CaptureJob {
 ///
 /// The old pipeline decoded the full-resolution frame twice and JPEG-encoded
 /// it twice — once to apply the stamp, once to embed the payload — all on the
-/// UI isolate. On a 12MP photo that is seconds of frozen interface. This does
-/// one decode, one encode, and is safe to hand to `Isolate.run`.
+/// UI isolate. On a 12MP photo that is seconds of frozen interface. This
+/// encodes once — decoding the result once more so the hashes describe the
+/// stored pixels — and is safe to hand to `Isolate.run`.
 SignedImage composeSignedFrame(CaptureJob job) {
   final img.Image? decoded = img.decodeImage(job.rawJpeg);
   if (decoded == null) {
@@ -1036,7 +1037,17 @@ SignedImage composeSignedFrame(CaptureJob job) {
     );
   }
 
-  // 2. Hash the stamped pixels, then sign.
+  // 2. Encode once, then hash the pixels a checker will actually decode.
+  //
+  // Hashing the in-memory image instead compared the checker's decoded JPEG
+  // against pixels that never reached the file. JPEG rounding alone could
+  // push a flat tile past the tolerance, so an untouched photo read as
+  // "picture edited". The payload is added afterwards without re-encoding, so
+  // the hashed pixels are exactly the stored ones.
+  final Uint8List encoded =
+      Uint8List.fromList(img.encodeJpg(decoded, quality: 95));
+  final img.Image stored = img.decodeJpg(encoded) ?? decoded;
+
   final SecurityService service = SecurityService();
   final SignedEnvelope unsigned = SignedEnvelope(
     lat: job.latitude,
@@ -1044,8 +1055,8 @@ SignedImage composeSignedFrame(CaptureJob job) {
     alt: job.altitude,
     timestampMs: job.timestampUtc.millisecondsSinceEpoch,
     deviceId: job.deviceId,
-    pixelHash: service.computeBannerDHash(decoded),
-    sceneTiles: service.computeSceneTiles(decoded),
+    pixelHash: service.computeBannerDHash(stored),
+    sceneTiles: service.computeSceneTiles(stored),
     signature: '',
     kid: IdentityService.fingerprintOf(job.publicKeyB64),
     publicKey: job.publicKeyB64,
@@ -1060,25 +1071,21 @@ SignedImage composeSignedFrame(CaptureJob job) {
   final String jsonPayload = jsonEncode(envelope.toJson());
 
   // Embed #1 — EXIF UserComment (survives most metadata-preserving tools).
+  // Injected into the encoded file rather than re-encoding it, which would
+  // change the pixels that were just hashed.
+  Uint8List withExif = encoded;
   try {
-    decoded.exif.imageIfd['UserComment'] =
-        '${SecurityService._comMarker}$jsonPayload';
+    final img.ExifData exif = img.ExifData.from(decoded.exif);
+    exif.imageIfd['UserComment'] = '${SecurityService._comMarker}$jsonPayload';
+    withExif = img.injectJpgExif(encoded, exif) ?? encoded;
   } catch (_) {
     // Best effort; the COM + EOF copies still carry the payload.
   }
 
-  // `image` 4.x keeps `textData` for PNG only — the JPEG encoder drops it —
-  // so the JPEG COM segment below is written by hand instead.
-  decoded.textData ??= <String, String>{};
-  decoded.textData!['Comment'] = '${SecurityService._comMarker}$jsonPayload';
-
-  // 3. Encode once.
-  final Uint8List encoded =
-      Uint8List.fromList(img.encodeJpg(decoded, quality: 95));
-
-  // Embed #2 — real JPEG COM (0xFFFE) segment injected after SOI.
+  // Embed #2 — real JPEG COM (0xFFFE) segment injected after SOI. `image`
+  // 4.x keeps `textData` for PNG only, so it is written by hand.
   final Uint8List withComment = service._injectJpegComment(
-    encoded,
+    withExif,
     '${SecurityService._comMarker}$jsonPayload',
   );
 

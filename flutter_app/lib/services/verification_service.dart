@@ -112,7 +112,9 @@ class VerificationService {
           verdict: VerificationVerdict.notSigned,
           reason:
               'This photo has no GeoGuard details inside it. It was either not '
-              'taken with GeoGuard, or the details were removed later.',
+              'taken with GeoGuard, or the details were removed later — chat '
+              'apps, editors and cloud backups that shrink a photo do this. '
+              'To check a photo you took, pick it from GeoGuard photos.',
         );
       }
 

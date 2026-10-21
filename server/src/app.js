@@ -14,7 +14,7 @@ import {
 } from './keys.js';
 import { paymentsRouter, webhookRouter } from './payments.js';
 import { pagesRouter } from './pages.js';
-import { LATEST_RELEASE } from './release.js';
+import { latestRelease } from './release.js';
 import { sharesRouter } from './shares.js';
 import { privateView, publicView } from './views.js';
 
@@ -42,7 +42,8 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use(pagesRouter());
 
 // Public, so an app that is signed out can still learn it is out of date.
-app.get('/app/latest', (_req, res) => res.json(LATEST_RELEASE));
+// An update is only offered once its APK can really be downloaded.
+app.get('/app/latest', async (_req, res) => res.json(await latestRelease()));
 
 // ---------------------------------------------------------------------------
 // Sign in
