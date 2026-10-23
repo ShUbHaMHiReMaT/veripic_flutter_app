@@ -10,10 +10,10 @@
  * never has to change as long as each release attaches a file with that name.
  */
 export const LATEST_RELEASE = {
-  build: 2003,
-  version: '1.0.2',
+  build: 2004,
+  version: '1.0.3',
   url: 'https://github.com/ShUbHaMHiReMaT/veripic_flutter_app/releases/latest/download/GeoGuard.apk',
-  notes: 'Check a photo straight from the Photos tab, and untouched photos no longer read as edited.',
+  notes: 'Checking a photo no longer freezes the screen, the "Photo saved" message goes away by itself, and sending photos is more reliable.',
 };
 
 /** How long one answer about the download link is reused. */
