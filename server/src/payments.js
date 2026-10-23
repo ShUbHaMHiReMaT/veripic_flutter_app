@@ -156,7 +156,12 @@ export function paymentsRouter() {
   });
 
   router.post('/order', async (req, res) => {
-    const plan = PLANS[req.body?.plan ?? 'pro'];
+    const planId = req.body?.plan ?? 'pro';
+    // Own keys only, so "__proto__" or "constructor" is an unknown plan.
+    const plan =
+      typeof planId === 'string' && Object.hasOwn(PLANS, planId)
+        ? PLANS[planId]
+        : null;
     if (!plan) return res.status(400).json({ error: 'Unknown plan.' });
 
     const user = await users().findOne({ googleSub: req.session.sub });
@@ -206,7 +211,13 @@ export function paymentsRouter() {
   /** The actual gate. Nothing is unlocked anywhere else. */
   router.post('/verify', async (req, res) => {
     const { orderId, paymentId, signature } = req.body ?? {};
-    if (!orderId || !paymentId || !signature) {
+    // Strings only: an object such as {"$ne": null} would otherwise reach the
+    // database as a query operator and match orders it was never meant to.
+    if (
+      typeof orderId !== 'string' || !orderId ||
+      typeof paymentId !== 'string' || !paymentId ||
+      typeof signature !== 'string' || !signature
+    ) {
       return res.status(400).json({ error: 'Incomplete payment details.' });
     }
 

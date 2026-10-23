@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "geoguard",
-      "version": "1.0.2+2003",
+      "version": "1.0.3+2004",
       "dependencies": [
         "android_id",
         "camera",

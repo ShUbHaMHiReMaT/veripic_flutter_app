@@ -344,6 +344,10 @@ class _CameraScreenState extends State<CameraScreen>
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(
+          // Since Flutter 3.35 a snack bar with an action stays up until it is
+          // tapped unless told otherwise, which ignored the duration and left
+          // this covering the controls for good.
+          persist: false,
           duration: const Duration(seconds: 4),
           content: Text(
             shot.galleryError == null

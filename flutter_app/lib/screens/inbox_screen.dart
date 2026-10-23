@@ -52,8 +52,14 @@ class _InboxScreenState extends State<InboxScreen> {
       final int stamp = (item.sentAt ?? DateTime.now()).millisecondsSinceEpoch;
       await File('${dir.path}/geoguard_$stamp.jpg').writeAsBytes(original);
 
-      // Only drop the server copy once the file is safely on disk.
-      await _account.deleteShare(item);
+      // Only drop the server copy once the file is safely on disk. If the
+      // delete fails the photo is still saved, so say so rather than report an
+      // error; opening it again later overwrites the same file and retries.
+      try {
+        await _account.deleteShare(item);
+      } on AccountException catch (_) {
+        // Server copy stays until the next open.
+      }
       FrameStore.notifyChanged();
 
       if (!mounted) return;

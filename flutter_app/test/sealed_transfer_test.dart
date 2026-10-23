@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geoguard/services/identity_service.dart';
 import 'package:geoguard/services/sealed_transfer.dart';
@@ -176,5 +176,42 @@ void main() {
       ),
       hasLength(256),
     );
+  });
+
+  test('an upgraded identity keeps the same encryption key across launches',
+      () async {
+    // The minted encryption pair must be stored on first load. Before it
+    // was, every launch minted a new one, so photos sealed to the key the
+    // directory published could never be opened.
+    final Map<String, String> store = <String, String>{};
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+            (MethodCall call) async {
+      final Map<Object?, Object?> args =
+          (call.arguments as Map<Object?, Object?>?) ?? <Object?, Object?>{};
+      final String? key = args['key'] as String?;
+      switch (call.method) {
+        case 'read':
+          return store[key];
+        case 'write':
+          store[key!] = args['value'] as String;
+          return null;
+      }
+      return null;
+    });
+
+    final PortableIdentity old = IdentityService.generate();
+    store['geoguard_identity_p256_v6'] = jsonEncode(<String, String>{
+      'd': base64Encode(old.privateKeyBytes),
+      'q': base64Encode(old.publicKeyBytes),
+    });
+
+    // Two launches are two fresh services with no shared in-memory cache.
+    final PortableIdentity first = await IdentityService().identity();
+    final PortableIdentity second = await IdentityService().identity();
+
+    expect(first.publicKeyB64, old.publicKeyB64);
+    expect(second.encryptionPublicKeyB64, first.encryptionPublicKeyB64);
   });
 }

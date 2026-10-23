@@ -1,8 +1,36 @@
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
 import 'security_service.dart';
+
+/// Fingerprints recomputed from the photo being checked.
+typedef PixelHashes = ({String banner, List<String> tiles});
+
+/// Decodes the photo and fingerprints the stamp and every scene tile.
+///
+/// Pure work with no platform calls, so it can run in a background isolate:
+/// decoding a 12MP photo takes seconds on a phone and used to freeze the
+/// check screen while it did. Null when the bytes are not an image.
+PixelHashes? hashPixels(Uint8List bytes) {
+  final img.Image? decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  final SecurityService security = SecurityService();
+  return (
+    banner: security.computeBannerDHash(decoded),
+    tiles: security.computeSceneTiles(decoded),
+  );
+}
+
+/// Runs [hashPixels] off the UI isolate, or inline if one cannot be spawned.
+Future<PixelHashes?> _hashPixelsOffThread(Uint8List bytes) async {
+  try {
+    return await Isolate.run(() => hashPixels(bytes));
+  } catch (_) {
+    return hashPixels(bytes);
+  }
+}
 
 enum VerificationVerdict {
   authentic,
@@ -157,8 +185,8 @@ class VerificationService {
 
       // ---- Stage 3: perceptual banner hash ---------------------------
       report(VerifyStage.dhash, StageState.running);
-      final img.Image? decoded = img.decodeImage(imageBytes);
-      if (decoded == null) {
+      final PixelHashes? pixels = await _hashPixelsOffThread(imageBytes);
+      if (pixels == null) {
         report(VerifyStage.dhash, StageState.failed,
             'This file could not be read');
         report(VerifyStage.scene, StageState.skipped,
@@ -171,7 +199,7 @@ class VerificationService {
         );
       }
 
-      final String currentDHash = _security.computeBannerDHash(decoded);
+      final String currentDHash = pixels.banner;
       final int distance =
           _security.hammingDistance(currentDHash, envelope.pixelHash);
 
@@ -210,13 +238,26 @@ class VerificationService {
         report(VerifyStage.scene, StageState.skipped,
             'Older photo (v${envelope.version}) — the picture was not protected');
       } else {
-        final List<String> currentTiles = _security.computeSceneTiles(decoded);
         tileDistances =
-            _security.compareSceneTiles(envelope.sceneTiles, currentTiles);
+            _security.compareSceneTiles(envelope.sceneTiles, pixels.tiles);
 
         if (tileDistances.isEmpty) {
-          report(VerifyStage.scene, StageState.skipped,
-              'The picture could not be compared');
+          // The signature promises a protected picture, but this one cannot be
+          // cut into the same tiles — typically because it was shrunk. A
+          // picture that cannot be checked must never pass as real.
+          report(VerifyStage.scene, StageState.failed,
+              'The picture could not be compared with the original');
+          return VerificationReport(
+            verdict: VerificationVerdict.tamperedScene,
+            reason:
+                'The picture no longer matches the original, so it cannot be '
+                'checked. It has most likely been resized or cropped since it '
+                'was taken.',
+            envelope: envelope,
+            signatureCheck: check,
+            recomputedHash: currentDHash,
+            hammingDistance: distance,
+          );
         } else {
           altered = tileDistances
               .where((int d) => d > SecurityService.maxSceneTileHammingDistance)

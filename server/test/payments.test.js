@@ -73,6 +73,19 @@ describe('payment verification', { skip: !HAS_DB }, () => {
     await close();
   });
 
+  it('refuses query operators in place of an order id', async () => {
+    const res = await call('/payments/verify', {
+      token,
+      method: 'POST',
+      body: { orderId: { $ne: null }, paymentId: 'pay_x', signature: 'sig' },
+    });
+    assert.equal(res.status, 400);
+
+    // The real order was not touched by the attempt.
+    const order = await getDb().collection('payments').findOne({ orderId });
+    assert.equal(order.status, 'created');
+  });
+
   it('exposes the key id but never the secret', async () => {
     const res = await call('/payments/config');
     const body = await res.json();

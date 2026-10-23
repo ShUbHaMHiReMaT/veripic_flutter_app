@@ -1,3 +1,5 @@
+import './async-errors.js';
+
 import cors from 'cors';
 import express from 'express';
 import rateLimit from 'express-rate-limit';

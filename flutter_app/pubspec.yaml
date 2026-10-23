@@ -1,7 +1,7 @@
 name: geoguard
 description: GeoGuard - Tamper-Proof Geotagged Camera & Verification System.
 publish_to: "none"
-version: 1.0.2+2003
+version: 1.0.3+2004
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

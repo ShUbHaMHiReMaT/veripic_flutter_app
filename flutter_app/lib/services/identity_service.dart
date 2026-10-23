@@ -202,7 +202,22 @@ class IdentityService {
       if (raw != null && raw.isNotEmpty) {
         final Object? decoded = jsonDecode(raw);
         if (decoded is Map<String, dynamic>) {
-          return PortableIdentity.fromJson(decoded);
+          final PortableIdentity id = PortableIdentity.fromJson(decoded);
+          // An identity from before encryption keys existed comes back with a
+          // freshly minted encryption pair. Persist it now: otherwise every
+          // launch mints a different one, and photos sealed to the published
+          // key can no longer be opened.
+          if (decoded['ed'] == null || decoded['eq'] == null) {
+            try {
+              await _storage.write(
+                key: _identityStorageKey,
+                value: jsonEncode(id.toJson()),
+              );
+            } catch (_) {
+              // Keystore unavailable; same handling as a fresh identity.
+            }
+          }
+          return id;
         }
       }
     } catch (_) {

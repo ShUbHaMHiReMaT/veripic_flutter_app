@@ -856,10 +856,16 @@ class _SceneCard extends StatelessWidget {
     final bool checked = report.sceneWasChecked;
     final int altered = report.alteredTiles;
     final bool clean = checked && altered == 0;
+    // Protected when signed, yet no tiles could be compared: the picture was
+    // resized or cropped, which is a failure, not an older photo.
+    final bool uncomparable =
+        !checked && (report.envelope?.protectsScene ?? false);
 
-    final Color tint = !checked
-        ? Tokens.tintNull
-        : (clean ? Tokens.statusOk : Tokens.statusAlert);
+    final Color tint = uncomparable
+        ? Tokens.statusAlert
+        : !checked
+            ? Tokens.tintNull
+            : (clean ? Tokens.statusOk : Tokens.statusAlert);
 
     return FieldCard(
       child: Column(
@@ -869,15 +875,24 @@ class _SceneCard extends StatelessWidget {
             children: <Widget>[
               Expanded(child: Text('Picture check', style: p.cardTitle)),
               StatusBadge(
-                label: !checked
-                    ? 'not checked'
-                    : (clean ? 'unchanged' : '$altered changed'),
+                label: uncomparable
+                    ? 'cannot compare'
+                    : !checked
+                        ? 'not checked'
+                        : (clean ? 'unchanged' : '$altered changed'),
                 color: tint,
               ),
             ],
           ),
           const SizedBox(height: Tokens.spaceSnug),
-          if (!checked)
+          if (uncomparable)
+            Text(
+              'This picture is no longer the size it was taken at, so its '
+              'parts cannot be compared with the original. It has been resized '
+              'or cropped.',
+              style: p.body,
+            )
+          else if (!checked)
             Text(
               'This photo was taken before picture protection existed, so only '
               'the stamp was protected. The picture itself cannot be checked.',

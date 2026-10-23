@@ -313,6 +313,11 @@ class CertificateService {
             '(tolerance ${SecurityService.maxSceneTileHammingDistance} bits '
             'per tile)'
       ]);
+    } else if (r.envelope?.protectsScene ?? false) {
+      rows.add(<String>[
+        'Scene fingerprint drift',
+        'Cannot be compared — the picture has been resized or cropped'
+      ]);
     } else {
       rows.add(<String>[
         'Scene fingerprint drift',
@@ -340,7 +345,14 @@ class CertificateService {
       'system has been modified may report a false position without that flag. ',
     );
 
-    if (!r.sceneWasChecked) {
+    if (!r.sceneWasChecked && (r.envelope?.protectsScene ?? false)) {
+      b.write(
+        '(b) that the photographic content is unaltered; the frame was signed '
+        'with scene fingerprints, but the copy examined no longer has the '
+        'dimensions needed to compare them, which indicates resizing or '
+        'cropping after capture. ',
+      );
+    } else if (!r.sceneWasChecked) {
       b.write(
         '(b) that the photographic content is unaltered; this frame was signed '
         'before scene fingerprinting was introduced, so only the stamp was '

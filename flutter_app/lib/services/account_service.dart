@@ -98,6 +98,7 @@ class Account {
     this.username,
     this.displayName,
     this.sharingCode,
+    this.encryptionKey,
     this.fingerprint,
     this.photoUrl,
     this.proUntil,
@@ -108,6 +109,9 @@ class Account {
   final String? username;
   final String? displayName;
   final String? sharingCode;
+
+  /// The key-agreement key the directory hands to people sending to us.
+  final String? encryptionKey;
   final String? fingerprint;
   final String? photoUrl;
 
@@ -135,11 +139,22 @@ class Account {
   bool matchesLocalKey(String localSharingCode) =>
       sharingCode != null && sharingCode == localSharingCode;
 
+  /// True when both published keys are this install's current ones.
+  ///
+  /// The encryption key matters as much as the signing key: if the directory
+  /// holds an old one, every photo sealed to this user is unopenable.
+  bool matchesLocalKeys({
+    required String signing,
+    required String encryption,
+  }) =>
+      matchesLocalKey(signing) && encryptionKey == encryption;
+
   static Account fromJson(Map<String, dynamic> json) => Account(
         email: json['email'] as String?,
         username: json['username'] as String?,
         displayName: json['displayName'] as String?,
         sharingCode: json['sharingCode'] as String?,
+        encryptionKey: json['encryptionKey'] as String?,
         fingerprint: json['fingerprint'] as String?,
         photoUrl: json['photoUrl'] as String?,
         proUntil:
@@ -153,6 +168,7 @@ class Account {
         'username': username,
         'displayName': displayName,
         'sharingCode': sharingCode,
+        'encryptionKey': encryptionKey,
         'fingerprint': fingerprint,
         'photoUrl': photoUrl,
         'proUntil': proUntil?.toUtc().toIso8601String(),
@@ -413,7 +429,12 @@ class AccountService {
   Future<Account> _publishSharingCodeIfStale(Account account) async {
     try {
       final PortableIdentity id = await _identity.identity();
-      if (account.matchesLocalKey(id.publicKeyB64)) return account;
+      if (account.matchesLocalKeys(
+        signing: id.publicKeyB64,
+        encryption: id.encryptionPublicKeyB64,
+      )) {
+        return account;
+      }
       return await publishSharingCode();
     } catch (_) {
       // Publishing is best effort at sign-in time; the Senders screen offers
@@ -546,11 +567,18 @@ class AccountService {
       (bytes: fileBytes, key: theirKey),
     );
 
-    await _post('/shares', <String, dynamic>{
-      'toUsername': recipient.username,
-      'ciphertextB64': base64Encode(sealed.ciphertext),
-      ...sealed.toMetadata(),
-    });
+    // A photo is megabytes, not the few hundred bytes of every other call, so
+    // it gets the same generous allowance as a download. With the default a
+    // slow upload was reported as unreachable while it was still arriving.
+    await _post(
+      '/shares',
+      <String, dynamic>{
+        'toUsername': recipient.username,
+        'ciphertextB64': base64Encode(sealed.ciphertext),
+        ...sealed.toMetadata(),
+      },
+      timeout: const Duration(minutes: 3),
+    );
   }
 
   Future<List<InboxItem>> inbox() async {
@@ -607,12 +635,19 @@ class AccountService {
   Future<Map<String, dynamic>> _get(String path) async =>
       _send(() async => _http.get(_uri(path), headers: await _headers()));
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) =>
-      _send(() async => _http.post(
-            _uri(path),
-            headers: await _headers(),
-            body: jsonEncode(body),
-          ));
+  Future<Map<String, dynamic>> _post(
+    String path,
+    Map<String, dynamic> body, {
+    Duration timeout = _timeout,
+  }) =>
+      _send(
+        () async => _http.post(
+          _uri(path),
+          headers: await _headers(),
+          body: jsonEncode(body),
+        ),
+        timeout: timeout,
+      );
 
   Future<Map<String, dynamic>> _put(String path, Map<String, dynamic> body) =>
       _send(() async => _http.put(
@@ -622,15 +657,16 @@ class AccountService {
           ));
 
   Future<Map<String, dynamic>> _send(
-    Future<http.Response> Function() request,
-  ) async {
+    Future<http.Response> Function() request, {
+    Duration timeout = _timeout,
+  }) async {
     if (!AppConfig.hasApi) {
       throw AccountException(AppConfig.setupHint);
     }
 
     final http.Response response;
     try {
-      response = await request().timeout(_timeout);
+      response = await request().timeout(timeout);
     } catch (_) {
       throw const AccountException(
         'Could not reach the GeoGuard server. Check your connection.',

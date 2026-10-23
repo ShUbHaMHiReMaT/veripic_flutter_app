@@ -58,6 +58,21 @@ void main() {
     });
   });
 
+  group('published keys', () {
+    test('a stale encryption key counts as not published', () {
+      // The signing key alone used to decide this, so a directory entry with
+      // an old encryption key was never corrected and sealed photos sent to
+      // that user could not be opened.
+      final Account a = Account.fromJson(<String, dynamic>{
+        'sharingCode': 'SIGN',
+        'encryptionKey': 'OLD',
+      });
+      expect(a.matchesLocalKeys(signing: 'SIGN', encryption: 'NEW'), isFalse);
+      expect(a.matchesLocalKeys(signing: 'SIGN', encryption: 'OLD'), isTrue);
+      expect(Account.fromJson(a.toJson()).encryptionKey, 'OLD');
+    });
+  });
+
   group('session errors', () {
     test('only a rejected session counts as signed out', () {
       expect(const AccountException('x', statusCode: 401).isAuthFailure, isTrue);
